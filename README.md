@@ -744,3 +744,73 @@ For the constrained balanced policy:
 ```powershell
 python semantic_validation.py --policy balanced --balanced-min-known-recall 0.70
 ```
+
+
+## Class-specific semantic radius
+
+Branch `v0.1` now includes an open-set detector based on one semantic radius
+per known class.
+
+The radii are learned from the known development benchmark only, using
+leave-one-out distances to each class centroid:
+
+```text
+class centroid
+    |
+    +-- animal radius
+    +-- weather radius
+    +-- computer radius
+    +-- food radius
+    +-- transport radius
+    +-- science radius
+```
+
+A new input is classified as Unknown when its distance from the nearest
+predicted class centroid exceeds that class's learned radius:
+
+```text
+distance(query, nearest centroid) > class radius
+    -> Unknown
+```
+
+The implementation is in:
+
+```text
+semantic_radius.py
+```
+
+Independent validation now uses the class-radius detector by default:
+
+```powershell
+python semantic_validation.py
+```
+
+Equivalent explicit command:
+
+```powershell
+python semantic_validation.py --detector class-radius
+```
+
+The default radius parameters are:
+
+```text
+quantile = 0.90
+scale    = 1.00
+```
+
+They can be changed without using holdout data for fitting:
+
+```powershell
+python semantic_validation.py --detector class-radius --radius-quantile 0.90 --radius-scale 1.10
+```
+
+The previous global similarity/margin detector remains available for
+comparison:
+
+```powershell
+python semantic_validation.py --detector global --policy balanced
+```
+
+This allows a direct comparison between global-threshold open-set detection
+and class-specific semantic-radius detection on the same independent holdout
+benchmarks.
