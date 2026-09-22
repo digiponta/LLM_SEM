@@ -145,16 +145,57 @@ class LanguageModel(nn.Module):
             "context_length": self.context_length,
         }
 
-    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
-        # token_ids: [batch, time]
+    def encode_hidden(self, token_ids: torch.Tensor) -> torch.Tensor:
+        """Return contextual hidden states before vocabulary projection.
+
+        Shape:
+            token_ids: [batch, time]
+            output   : [batch, time, d_model]
+        """
         if token_ids.dim() != 2:
             raise ValueError("token_ids must have shape [batch, time].")
 
         x = self.embedding(token_ids)
         for block in self.blocks:
             x = block(x)
-        x = self.final_norm(x)
-        return self.lm_head(x)
+        return self.final_norm(x)
+
+    def encode_semantic(
+        self,
+        token_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Return one semantic vector per input sequence.
+
+        The semantic vector is mean-pooled from the final contextual hidden
+        states. If attention_mask is supplied, masked positions are excluded.
+
+        Shape:
+            token_ids      : [batch, time]
+            attention_mask : [batch, time] (optional)
+            output         : [batch, d_model]
+        """
+        hidden = self.encode_hidden(token_ids)
+
+        if attention_mask is None:
+            return hidden.mean(dim=1)
+
+        if attention_mask.shape != token_ids.shape:
+            raise ValueError(
+                "attention_mask must have the same [batch, time] shape "
+                "as token_ids."
+            )
+
+        mask = attention_mask.to(
+            device=hidden.device,
+            dtype=hidden.dtype,
+        ).unsqueeze(-1)
+        denominator = mask.sum(dim=1).clamp_min(1.0)
+        return (hidden * mask).sum(dim=1) / denominator
+
+    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+        hidden = self.encode_hidden(token_ids)
+        return self.lm_head(hidden)
 
     @property
     def parameter_count(self) -> int:
