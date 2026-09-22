@@ -2,8 +2,11 @@
 #
 # Semantic routing experiment for LLM_SEM.
 #
-# Builds one centroid per semantic class from a labeled benchmark and routes
-# new text to the nearest centroid using cosine similarity.
+# Supports:
+# - centroid routing
+# - leave-one-out known routing evaluation
+# - Known/Unknown evaluation without known-sample leakage
+# - threshold sweep for similarity/margin trade-offs
 #
 # Default semantic representation:
 #   raw hybrid = 0.35 * attention + 0.65 * last
@@ -16,13 +19,13 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
-from typing import Dict, List, Sequence
+from typing import Dict, List, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
 
 from model import LanguageModel
-from semantic import SemanticData, encode_text
+from semantic import encode_text
 from semantic_eval import LabeledSentence, load_benchmark
 from tokenizer import Tokenizer
 
@@ -39,6 +42,27 @@ class RouteResult:
     label: str
     similarity: float
     distance: float
+
+
+@dataclass
+class KnownScore:
+    expected: str
+    predicted: str
+    top1_similarity: float
+    top2_similarity: float
+    margin: float
+    correct: bool
+    text: str
+
+
+@dataclass
+class UnknownScore:
+    source_label: str
+    top1_label: str
+    top1_similarity: float
+    top2_similarity: float
+    margin: float
+    text: str
 
 
 class SemanticRouter:
@@ -62,52 +86,17 @@ class SemanticRouter:
             hybrid_alpha=self.alpha,
             normalize_hybrid=False,
         )
-        return torch.tensor(
-            semantic.vector,
-            dtype=torch.float32,
-        )
+        return torch.tensor(semantic.vector, dtype=torch.float32)
 
     def fit(self, samples: List[LabeledSentence]) -> None:
-        grouped: Dict[str, List[torch.Tensor]] = {}
-
-        for sample in samples:
-            grouped.setdefault(sample.label, []).append(
-                self._encode_tensor(sample.text)
-            )
-
-        self.centroids = {
-            label: torch.stack(vectors, dim=0).mean(dim=0)
-            for label, vectors in grouped.items()
-        }
+        vectors = [self._encode_tensor(sample.text) for sample in samples]
+        self.centroids = _centroids_from_vectors(samples, vectors)
 
     def route(self, text: str) -> List[RouteResult]:
         if not self.centroids:
             raise RuntimeError("Router has not been fitted.")
-
         query = self._encode_tensor(text)
-        results: List[RouteResult] = []
-
-        for label, centroid in self.centroids.items():
-            similarity = float(
-                F.cosine_similarity(
-                    query,
-                    centroid,
-                    dim=0,
-                ).item()
-            )
-            results.append(
-                RouteResult(
-                    label=label,
-                    similarity=similarity,
-                    distance=1.0 - similarity,
-                )
-            )
-
-        results.sort(
-            key=lambda result: result.similarity,
-            reverse=True,
-        )
-        return results
+        return _rank_against_centroids(query, self.centroids)
 
 
 def parse_args() -> argparse.Namespace:
@@ -120,34 +109,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--unknown-benchmark",
         default=DEFAULT_UNKNOWN_BENCHMARK,
-        help="Unknown-category benchmark CSV/JSON.",
     )
     parser.add_argument("--alpha", type=float, default=DEFAULT_ALPHA)
     parser.add_argument("--text", default=None)
+    parser.add_argument("--evaluate", action="store_true")
+    parser.add_argument("--evaluate-unknown", action="store_true")
     parser.add_argument(
-        "--evaluate",
+        "--sweep-thresholds",
         action="store_true",
-        help="Run leave-one-out routing evaluation on the benchmark.",
-    )
-    parser.add_argument(
-        "--evaluate-unknown",
-        action="store_true",
-        help=(
-            "Evaluate Known/Unknown routing using the known benchmark to "
-            "derive thresholds and a separate unknown benchmark."
-        ),
+        help="Sweep Known/Unknown similarity and margin thresholds.",
     )
     parser.add_argument(
         "--eval-csv",
         default="semantic_router_eval.csv",
-        help="CSV output for leave-one-out routing evaluation.",
     )
     parser.add_argument(
-        "--top-k",
-        type=int,
-        default=3,
-        help="Number of candidate routes to display.",
+        "--unknown-eval-csv",
+        default="semantic_unknown_eval.csv",
     )
+    parser.add_argument(
+        "--sweep-csv",
+        default="semantic_unknown_threshold_sweep.csv",
+    )
+    parser.add_argument("--top-k", type=int, default=3)
     return parser.parse_args()
 
 
@@ -164,22 +148,32 @@ def _centroids_from_vectors(
     }
 
 
-def evaluate_router(
+def _rank_against_centroids(
+    query: torch.Tensor,
+    centroids: Dict[str, torch.Tensor],
+) -> List[RouteResult]:
+    results: List[RouteResult] = []
+    for label, centroid in centroids.items():
+        similarity = float(
+            F.cosine_similarity(query, centroid, dim=0).item()
+        )
+        results.append(
+            RouteResult(
+                label=label,
+                similarity=similarity,
+                distance=1.0 - similarity,
+            )
+        )
+    results.sort(key=lambda item: item.similarity, reverse=True)
+    return results
+
+
+def collect_known_loo_scores(
     router: SemanticRouter,
     samples: Sequence[LabeledSentence],
-    csv_filename: str,
-) -> None:
+) -> List[KnownScore]:
     vectors = [router._encode_tensor(sample.text) for sample in samples]
-    labels = sorted({sample.label for sample in samples})
-    confusion = {
-        expected: {predicted: 0 for predicted in labels}
-        for expected in labels
-    }
-    per_class_total = {label: 0 for label in labels}
-    per_class_correct = {label: 0 for label in labels}
-    rows = []
-    correct_top1 = []
-    correct_margin = []
+    rows: List[KnownScore] = []
 
     for index, sample in enumerate(samples):
         train_samples = [
@@ -189,71 +183,128 @@ def evaluate_router(
             vector for j, vector in enumerate(vectors) if j != index
         ]
         centroids = _centroids_from_vectors(train_samples, train_vectors)
+        ranked = _rank_against_centroids(vectors[index], centroids)
 
-        query = vectors[index]
-        ranked = []
-        for label, centroid in centroids.items():
-            similarity = float(
-                F.cosine_similarity(query, centroid, dim=0).item()
-            )
-            ranked.append((label, similarity))
-        ranked.sort(key=lambda item: item[1], reverse=True)
-
-        predicted = ranked[0][0]
-        top1 = ranked[0][1]
-        top2 = ranked[1][1] if len(ranked) > 1 else float("nan")
-        margin = top1 - top2 if len(ranked) > 1 else float("nan")
-        is_correct = predicted == sample.label
-
-        confusion[sample.label][predicted] += 1
-        per_class_total[sample.label] += 1
-        per_class_correct[sample.label] += int(is_correct)
-
-        if is_correct:
-            correct_top1.append(top1)
-            correct_margin.append(margin)
-
+        top1 = ranked[0]
+        top2 = ranked[1]
         rows.append(
-            {
-                "index": index,
-                "expected": sample.label,
-                "predicted": predicted,
-                "correct": is_correct,
-                "top1_similarity": top1,
-                "top2_similarity": top2,
-                "top1_top2_margin": margin,
-                "text": sample.text,
-            }
+            KnownScore(
+                expected=sample.label,
+                predicted=top1.label,
+                top1_similarity=top1.similarity,
+                top2_similarity=top2.similarity,
+                margin=top1.similarity - top2.similarity,
+                correct=top1.label == sample.label,
+                text=sample.text,
+            )
         )
+    return rows
 
-    accuracy = sum(int(row["correct"]) for row in rows) / len(rows)
 
-    path = Path(csv_filename)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
+def collect_unknown_scores(
+    router: SemanticRouter,
+    known_samples: Sequence[LabeledSentence],
+    unknown_samples: Sequence[LabeledSentence],
+) -> List[UnknownScore]:
+    router.fit(list(known_samples))
+    rows: List[UnknownScore] = []
+    for sample in unknown_samples:
+        ranked = router.route(sample.text)
+        top1 = ranked[0]
+        top2 = ranked[1]
+        rows.append(
+            UnknownScore(
+                source_label=sample.label,
+                top1_label=top1.label,
+                top1_similarity=top1.similarity,
+                top2_similarity=top2.similarity,
+                margin=top1.similarity - top2.similarity,
+                text=sample.text,
+            )
+        )
+    return rows
+
+
+def derive_unknown_thresholds(
+    known_scores: Sequence[KnownScore],
+) -> Tuple[float, float]:
+    correct = [row for row in known_scores if row.correct]
+    if not correct:
+        raise RuntimeError("No correct known routes are available.")
+
+    similarities = sorted(row.top1_similarity for row in correct)
+    margins = sorted(row.margin for row in correct)
+    q10_similarity = max(0, int(0.10 * (len(similarities) - 1)))
+    q10_margin = max(0, int(0.10 * (len(margins) - 1)))
+    return similarities[q10_similarity], margins[q10_margin]
+
+
+def _unknown_decision(
+    top1_similarity: float,
+    margin: float,
+    similarity_threshold: float,
+    margin_threshold: float,
+) -> bool:
+    return (
+        top1_similarity < similarity_threshold
+        or margin < margin_threshold
+    )
+
+
+def evaluate_router(
+    router: SemanticRouter,
+    samples: Sequence[LabeledSentence],
+    csv_filename: str,
+) -> None:
+    scores = collect_known_loo_scores(router, samples)
+    labels = sorted({sample.label for sample in samples})
+
+    confusion = {
+        expected: {predicted: 0 for predicted in labels}
+        for expected in labels
+    }
+    per_total = {label: 0 for label in labels}
+    per_correct = {label: 0 for label in labels}
+
+    for row in scores:
+        confusion[row.expected][row.predicted] += 1
+        per_total[row.expected] += 1
+        per_correct[row.expected] += int(row.correct)
+
+    accuracy = sum(int(row.correct) for row in scores) / len(scores)
+    sim_threshold, margin_threshold = derive_unknown_thresholds(scores)
+
+    with Path(csv_filename).open(
+        "w", encoding="utf-8-sig", newline=""
+    ) as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "expected", "predicted", "correct",
+            "top1_similarity", "top2_similarity",
+            "top1_top2_margin", "text",
+        ])
+        for row in scores:
+            writer.writerow([
+                row.expected, row.predicted, row.correct,
+                row.top1_similarity, row.top2_similarity,
+                row.margin, row.text,
+            ])
 
     print()
     print("============================================================")
     print(" Leave-One-Out Semantic Routing Evaluation")
     print("============================================================")
     print()
-    print("Samples          :", len(samples))
+    print("Samples          :", len(scores))
     print("Overall accuracy :", f"{accuracy * 100.0:.2f}%")
     print()
-
     print("Category accuracy")
     print("-----------------")
     for label in labels:
-        total = per_class_total[label]
-        correct = per_class_correct[label]
+        total = per_total[label]
+        correct = per_correct[label]
         value = correct / total if total else 0.0
-        print(
-            f"{label:<12} {correct:>2}/{total:<2} "
-            f"{value * 100.0:>6.2f}%"
-        )
+        print(f"{label:<12} {correct:>2}/{total:<2} {value * 100:>6.2f}%")
 
     print()
     print("Confusion matrix")
@@ -271,102 +322,91 @@ def evaluate_router(
     print()
     print("Routing confidence")
     print("------------------")
-    all_top1 = [float(row["top1_similarity"]) for row in rows]
-    all_margin = [float(row["top1_top2_margin"]) for row in rows]
-    print("Mean Top-1 similarity :", f"{mean(all_top1):.6f}")
-    print("Mean Top-1/Top-2 margin:", f"{mean(all_margin):.6f}")
-
-    if correct_top1 and correct_margin:
-        sorted_top1 = sorted(correct_top1)
-        sorted_margin = sorted(correct_margin)
-        q10_index_top1 = max(0, int(0.10 * (len(sorted_top1) - 1)))
-        q10_index_margin = max(0, int(0.10 * (len(sorted_margin) - 1)))
-        similarity_threshold = sorted_top1[q10_index_top1]
-        margin_threshold = sorted_margin[q10_index_margin]
-
-        print()
-        print("Unknown candidate thresholds")
-        print("----------------------------")
-        print(
-            "Top-1 similarity threshold :",
-            f"{similarity_threshold:.6f}",
-        )
-        print(
-            "Top-1/Top-2 margin threshold:",
-            f"{margin_threshold:.6f}",
-        )
-        print(
-            "Candidate rule: Unknown if Top-1 similarity is below "
-            "the similarity threshold OR the Top-1/Top-2 margin is below "
-            "the margin threshold."
-        )
-
+    print(
+        "Mean Top-1 similarity :",
+        f"{mean(row.top1_similarity for row in scores):.6f}",
+    )
+    print(
+        "Mean Top-1/Top-2 margin:",
+        f"{mean(row.margin for row in scores):.6f}",
+    )
+    print()
+    print("Unknown candidate thresholds")
+    print("----------------------------")
+    print("Top-1 similarity threshold :", f"{sim_threshold:.6f}")
+    print("Top-1/Top-2 margin threshold:", f"{margin_threshold:.6f}")
     print()
     print("Evaluation CSV saved:", csv_filename)
 
 
-def derive_unknown_thresholds(
-    router: SemanticRouter,
-    samples: Sequence[LabeledSentence],
-) -> tuple[float, float]:
-    vectors = [router._encode_tensor(sample.text) for sample in samples]
-    correct_top1: List[float] = []
-    correct_margin: List[float] = []
-
-    for index, sample in enumerate(samples):
-        train_samples = [
-            other for j, other in enumerate(samples) if j != index
-        ]
-        train_vectors = [
-            vector for j, vector in enumerate(vectors) if j != index
-        ]
-        centroids = _centroids_from_vectors(train_samples, train_vectors)
-
-        query = vectors[index]
-        ranked = []
-        for label, centroid in centroids.items():
-            similarity = float(
-                F.cosine_similarity(query, centroid, dim=0).item()
-            )
-            ranked.append((label, similarity))
-        ranked.sort(key=lambda item: item[1], reverse=True)
-
-        predicted = ranked[0][0]
-        top1 = ranked[0][1]
-        top2 = ranked[1][1]
-        margin = top1 - top2
-
-        if predicted == sample.label:
-            correct_top1.append(top1)
-            correct_margin.append(margin)
-
-    if not correct_top1 or not correct_margin:
-        raise RuntimeError(
-            "Could not derive Unknown thresholds from correct known routes."
-        )
-
-    sorted_top1 = sorted(correct_top1)
-    sorted_margin = sorted(correct_margin)
-    q10_top1 = max(0, int(0.10 * (len(sorted_top1) - 1)))
-    q10_margin = max(0, int(0.10 * (len(sorted_margin) - 1)))
-
-    return sorted_top1[q10_top1], sorted_margin[q10_margin]
-
-
-def is_unknown(
-    results: Sequence[RouteResult],
+def _evaluate_threshold_pair(
+    known_scores: Sequence[KnownScore],
+    unknown_scores: Sequence[UnknownScore],
     similarity_threshold: float,
     margin_threshold: float,
-) -> tuple[bool, float]:
-    if len(results) < 2:
-        raise ValueError("At least two routes are required for Unknown detection.")
+) -> Dict[str, float]:
+    known_total = len(known_scores)
+    unknown_total = len(unknown_scores)
 
-    margin = results[0].similarity - results[1].similarity
-    unknown = (
-        results[0].similarity < similarity_threshold
-        or margin < margin_threshold
+    known_accepted = 0
+    known_routed_correctly = 0
+    false_unknown = 0
+
+    for row in known_scores:
+        unknown = _unknown_decision(
+            row.top1_similarity,
+            row.margin,
+            similarity_threshold,
+            margin_threshold,
+        )
+        if unknown:
+            false_unknown += 1
+        else:
+            known_accepted += 1
+            if row.correct:
+                known_routed_correctly += 1
+
+    unknown_detected = 0
+    false_known = 0
+    for row in unknown_scores:
+        unknown = _unknown_decision(
+            row.top1_similarity,
+            row.margin,
+            similarity_threshold,
+            margin_threshold,
+        )
+        if unknown:
+            unknown_detected += 1
+        else:
+            false_known += 1
+
+    known_recall = (
+        known_routed_correctly / known_total if known_total else 0.0
     )
-    return unknown, margin
+    known_accept_rate = (
+        known_accepted / known_total if known_total else 0.0
+    )
+    unknown_detection = (
+        unknown_detected / unknown_total if unknown_total else 0.0
+    )
+    false_unknown_rate = (
+        false_unknown / known_total if known_total else 0.0
+    )
+    false_known_rate = (
+        false_known / unknown_total if unknown_total else 0.0
+    )
+    balanced_accuracy = (known_recall + unknown_detection) / 2.0
+
+    return {
+        "similarity_threshold": similarity_threshold,
+        "margin_threshold": margin_threshold,
+        "known_recall": known_recall,
+        "known_accept_rate": known_accept_rate,
+        "unknown_detection_rate": unknown_detection,
+        "false_unknown_rate": false_unknown_rate,
+        "false_known_rate": false_known_rate,
+        "balanced_accuracy": balanced_accuracy,
+    }
 
 
 def evaluate_unknown_router(
@@ -375,100 +415,57 @@ def evaluate_unknown_router(
     unknown_samples: Sequence[LabeledSentence],
     csv_filename: str,
 ) -> None:
-    similarity_threshold, margin_threshold = derive_unknown_thresholds(
-        router,
-        known_samples,
+    known_scores = collect_known_loo_scores(router, known_samples)
+    unknown_scores = collect_unknown_scores(
+        router, known_samples, unknown_samples
     )
+    sim_threshold, margin_threshold = derive_unknown_thresholds(known_scores)
 
-    router.fit(list(known_samples))
+    metrics = _evaluate_threshold_pair(
+        known_scores,
+        unknown_scores,
+        sim_threshold,
+        margin_threshold,
+    )
 
     rows = []
-    known_correct = 0
-    known_false_unknown = 0
-    unknown_detected = 0
-    unknown_false_known = 0
-
-    for sample in known_samples:
-        results = router.route(sample.text)
-        unknown, margin = is_unknown(
-            results,
-            similarity_threshold,
+    for row in known_scores:
+        unknown = _unknown_decision(
+            row.top1_similarity,
+            row.margin,
+            sim_threshold,
             margin_threshold,
         )
-        predicted = "unknown" if unknown else results[0].label
+        rows.append([
+            "known", row.expected,
+            "unknown" if unknown else row.predicted,
+            unknown, row.predicted, row.top1_similarity,
+            row.top2_similarity, row.margin, row.text,
+        ])
 
-        if unknown:
-            known_false_unknown += 1
-        elif predicted == sample.label:
-            known_correct += 1
-
-        rows.append(
-            {
-                "source": "known",
-                "expected": sample.label,
-                "predicted": predicted,
-                "unknown": unknown,
-                "top1_label": results[0].label,
-                "top1_similarity": results[0].similarity,
-                "top2_similarity": results[1].similarity,
-                "top1_top2_margin": margin,
-                "text": sample.text,
-            }
-        )
-
-    for sample in unknown_samples:
-        results = router.route(sample.text)
-        unknown, margin = is_unknown(
-            results,
-            similarity_threshold,
+    for row in unknown_scores:
+        unknown = _unknown_decision(
+            row.top1_similarity,
+            row.margin,
+            sim_threshold,
             margin_threshold,
         )
-        predicted = "unknown" if unknown else results[0].label
+        rows.append([
+            "unknown", row.source_label,
+            "unknown" if unknown else row.top1_label,
+            unknown, row.top1_label, row.top1_similarity,
+            row.top2_similarity, row.margin, row.text,
+        ])
 
-        if unknown:
-            unknown_detected += 1
-        else:
-            unknown_false_known += 1
-
-        rows.append(
-            {
-                "source": "unknown",
-                "expected": sample.label,
-                "predicted": predicted,
-                "unknown": unknown,
-                "top1_label": results[0].label,
-                "top1_similarity": results[0].similarity,
-                "top2_similarity": results[1].similarity,
-                "top1_top2_margin": margin,
-                "text": sample.text,
-            }
-        )
-
-    known_total = len(known_samples)
-    unknown_total = len(unknown_samples)
-    known_accept_rate = (
-        (known_total - known_false_unknown) / known_total
-        if known_total
-        else 0.0
-    )
-    known_routing_accuracy = (
-        known_correct / known_total if known_total else 0.0
-    )
-    unknown_detection_rate = (
-        unknown_detected / unknown_total if unknown_total else 0.0
-    )
-    false_unknown_rate = (
-        known_false_unknown / known_total if known_total else 0.0
-    )
-    false_known_rate = (
-        unknown_false_known / unknown_total if unknown_total else 0.0
-    )
-
-    path = Path(csv_filename)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
+    with Path(csv_filename).open(
+        "w", encoding="utf-8-sig", newline=""
+    ) as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "source", "expected", "predicted", "unknown",
+            "top1_label", "top1_similarity", "top2_similarity",
+            "top1_top2_margin", "text",
+        ])
         writer.writerows(rows)
 
     print()
@@ -476,63 +473,214 @@ def evaluate_unknown_router(
     print(" Known / Unknown Semantic Routing Evaluation")
     print("============================================================")
     print()
-    print("Known samples          :", known_total)
-    print("Unknown samples        :", unknown_total)
-    print("Similarity threshold   :", f"{similarity_threshold:.6f}")
+    print("Known samples          :", len(known_scores))
+    print("Unknown samples        :", len(unknown_scores))
+    print("Similarity threshold   :", f"{sim_threshold:.6f}")
     print("Margin threshold       :", f"{margin_threshold:.6f}")
     print()
-    print("Known routing accuracy :", f"{known_routing_accuracy * 100.0:.2f}%")
-    print("Known accept rate      :", f"{known_accept_rate * 100.0:.2f}%")
-    print("Unknown detection rate :", f"{unknown_detection_rate * 100.0:.2f}%")
-    print("False Unknown rate     :", f"{false_unknown_rate * 100.0:.2f}%")
-    print("False Known rate       :", f"{false_known_rate * 100.0:.2f}%")
-    print()
+    print("Known recall           :", f"{metrics['known_recall'] * 100:.2f}%")
+    print("Known accept rate      :", f"{metrics['known_accept_rate'] * 100:.2f}%")
+    print(
+        "Unknown detection rate :",
+        f"{metrics['unknown_detection_rate'] * 100:.2f}%",
+    )
+    print(
+        "False Unknown rate     :",
+        f"{metrics['false_unknown_rate'] * 100:.2f}%",
+    )
+    print(
+        "False Known rate       :",
+        f"{metrics['false_known_rate'] * 100:.2f}%",
+    )
+    print(
+        "Balanced accuracy      :",
+        f"{metrics['balanced_accuracy'] * 100:.2f}%",
+    )
 
+    grouped: Dict[str, List[bool]] = defaultdict(list)
+    for row in unknown_scores:
+        detected = _unknown_decision(
+            row.top1_similarity,
+            row.margin,
+            sim_threshold,
+            margin_threshold,
+        )
+        grouped[row.source_label].append(detected)
+
+    print()
     print("Unknown category breakdown")
     print("--------------------------")
-    grouped: Dict[str, List[bool]] = defaultdict(list)
-    for row in rows:
-        if row["source"] == "unknown":
-            grouped[str(row["expected"])].append(bool(row["unknown"]))
-
     for label in sorted(grouped):
         values = grouped[label]
-        detected = sum(int(value) for value in values)
+        detected = sum(int(v) for v in values)
         print(
             f"{label:<12} {detected:>2}/{len(values):<2} "
-            f"{detected / len(values) * 100.0:>6.2f}%"
+            f"{detected / len(values) * 100:>6.2f}%"
         )
 
     print()
     print("Unknown evaluation CSV saved:", csv_filename)
 
 
+def sweep_unknown_thresholds(
+    router: SemanticRouter,
+    known_samples: Sequence[LabeledSentence],
+    unknown_samples: Sequence[LabeledSentence],
+    csv_filename: str,
+) -> None:
+    known_scores = collect_known_loo_scores(router, known_samples)
+    unknown_scores = collect_unknown_scores(
+        router, known_samples, unknown_samples
+    )
+
+    similarities = sorted(
+        {round(row.top1_similarity, 6) for row in known_scores + [
+            KnownScore(
+                expected="unknown",
+                predicted=row.top1_label,
+                top1_similarity=row.top1_similarity,
+                top2_similarity=row.top2_similarity,
+                margin=row.margin,
+                correct=False,
+                text=row.text,
+            )
+            for row in unknown_scores
+        ]}
+    )
+    margins = sorted(
+        {round(row.margin, 6) for row in known_scores + [
+            KnownScore(
+                expected="unknown",
+                predicted=row.top1_label,
+                top1_similarity=row.top1_similarity,
+                top2_similarity=row.top2_similarity,
+                margin=row.margin,
+                correct=False,
+                text=row.text,
+            )
+            for row in unknown_scores
+        ]}
+    )
+
+    # Use compact quantile-like grids instead of every unique value.
+    def sample_grid(values: List[float], count: int = 15) -> List[float]:
+        if len(values) <= count:
+            return values
+        return sorted({
+            values[round(i * (len(values) - 1) / (count - 1))]
+            for i in range(count)
+        })
+
+    similarity_grid = sample_grid(similarities)
+    margin_grid = sample_grid(margins)
+
+    rows: List[Dict[str, float]] = []
+    for sim_threshold in similarity_grid:
+        for margin_threshold in margin_grid:
+            rows.append(
+                _evaluate_threshold_pair(
+                    known_scores,
+                    unknown_scores,
+                    sim_threshold,
+                    margin_threshold,
+                )
+            )
+
+    rows.sort(
+        key=lambda row: (
+            row["balanced_accuracy"],
+            row["unknown_detection_rate"],
+            row["known_recall"],
+        ),
+        reverse=True,
+    )
+
+    with Path(csv_filename).open(
+        "w", encoding="utf-8-sig", newline=""
+    ) as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print()
+    print("============================================================")
+    print(" Unknown Threshold Sweep")
+    print("============================================================")
+    print()
+    print(
+        f"{'SimTh':>8} {'MarginTh':>9} {'Known':>8} "
+        f"{'Unknown':>8} {'F-Unk':>8} {'F-Known':>8} {'BalAcc':>8}"
+    )
+    print("-" * 68)
+
+    for row in rows[:10]:
+        print(
+            f"{row['similarity_threshold']:>8.4f} "
+            f"{row['margin_threshold']:>9.4f} "
+            f"{row['known_recall'] * 100:>7.2f}% "
+            f"{row['unknown_detection_rate'] * 100:>7.2f}% "
+            f"{row['false_unknown_rate'] * 100:>7.2f}% "
+            f"{row['false_known_rate'] * 100:>7.2f}% "
+            f"{row['balanced_accuracy'] * 100:>7.2f}%"
+        )
+
+    best = rows[0]
+    print()
+    print("Best balanced threshold")
+    print("-----------------------")
+    print(
+        "Similarity threshold:",
+        f"{best['similarity_threshold']:.6f}",
+    )
+    print(
+        "Margin threshold    :",
+        f"{best['margin_threshold']:.6f}",
+    )
+    print(
+        "Known recall        :",
+        f"{best['known_recall'] * 100:.2f}%",
+    )
+    print(
+        "Unknown detection   :",
+        f"{best['unknown_detection_rate'] * 100:.2f}%",
+    )
+    print(
+        "Balanced accuracy   :",
+        f"{best['balanced_accuracy'] * 100:.2f}%",
+    )
+    print()
+    print("Threshold sweep CSV saved:", csv_filename)
+
+
 def main() -> None:
     args = parse_args()
 
-    if not Path(args.model).exists():
-        raise FileNotFoundError(f"Model checkpoint not found: {args.model}")
-    if not Path(args.tokenizer).exists():
-        raise FileNotFoundError(f"Tokenizer not found: {args.tokenizer}")
-    if not Path(args.benchmark).exists():
-        raise FileNotFoundError(f"Benchmark not found: {args.benchmark}")
-    if args.evaluate_unknown and not Path(args.unknown_benchmark).exists():
+    for filename, label in (
+        (args.model, "Model checkpoint"),
+        (args.tokenizer, "Tokenizer"),
+        (args.benchmark, "Benchmark"),
+    ):
+        if not Path(filename).exists():
+            raise FileNotFoundError(f"{label} not found: {filename}")
+
+    if (
+        args.evaluate_unknown or args.sweep_thresholds
+    ) and not Path(args.unknown_benchmark).exists():
         raise FileNotFoundError(
             f"Unknown benchmark not found: {args.unknown_benchmark}"
         )
+
     if not 0.0 <= args.alpha <= 1.0:
         raise ValueError("alpha must be between 0.0 and 1.0.")
 
     device = torch.device(
         "cuda" if torch.cuda.is_available() else "cpu"
     )
-
     tokenizer = Tokenizer.load(args.tokenizer)
     model, checkpoint = LanguageModel.load_checkpoint(
         args.model,
         device=device,
     )
-
     samples = load_benchmark(args.benchmark)
 
     print()
@@ -554,26 +702,32 @@ def main() -> None:
         tokenizer=tokenizer,
         alpha=args.alpha,
     )
-    router.fit(samples)
+
+    if args.sweep_thresholds:
+        unknown_samples = load_benchmark(args.unknown_benchmark)
+        sweep_unknown_thresholds(
+            router,
+            samples,
+            unknown_samples,
+            args.sweep_csv,
+        )
+        return
 
     if args.evaluate_unknown:
         unknown_samples = load_benchmark(args.unknown_benchmark)
         evaluate_unknown_router(
-            router=router,
-            known_samples=samples,
-            unknown_samples=unknown_samples,
-            csv_filename="semantic_unknown_eval.csv",
+            router,
+            samples,
+            unknown_samples,
+            args.unknown_eval_csv,
         )
         return
 
     if args.evaluate:
-        evaluate_router(
-            router=router,
-            samples=samples,
-            csv_filename=args.eval_csv,
-        )
+        evaluate_router(router, samples, args.eval_csv)
         return
 
+    router.fit(samples)
     labels = sorted(router.centroids.keys())
     print("Routes     :", ", ".join(labels))
     print()
@@ -581,7 +735,6 @@ def main() -> None:
     if args.text is not None:
         texts = [args.text]
     else:
-        texts = []
         print("Enter text to route. Type 'exit' to quit.")
         print()
         while True:
@@ -590,7 +743,6 @@ def main() -> None:
                 break
             if not text:
                 continue
-
             results = router.route(text)
             print()
             print("Selected route:", results[0].label)
