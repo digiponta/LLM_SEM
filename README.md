@@ -1224,3 +1224,69 @@ Detailed results are written to:
 ```text
 semantic_unknown_stress_results.csv
 ```
+
+
+## Integrated Known + Unknown stress test
+
+LLM_SEM v0.2 also provides a combined evaluation of independent Known samples
+and out-of-domain Unknown samples:
+
+```text
+semantic_integrated_stress.py
+```
+
+Run:
+
+```powershell
+python semantic_integrated_stress.py
+```
+
+The test uses:
+
+```text
+development known classes -> my_benchmark.csv
+independent Known samples  -> holdout_benchmark.csv
+Unknown stress samples     -> unknown_stress_benchmark.csv
+```
+
+All inputs are passed through the frozen base LLM and the trained v0.2
+projection head. The projected development benchmark defines known-class
+centroids and class-specific semantic radii.
+
+The report includes:
+
+- Known base routing accuracy
+- Known Recall after Unknown rejection
+- False Unknown Rate
+- Unknown Detection Rate
+- False Known Rate
+- Balanced Accuracy
+- Known and Unknown distance/radius distributions
+- maximum Known ratio and minimum Unknown ratio
+- separation gap and overlap status
+- per-category Known and Unknown results
+
+The core separation diagnostic is:
+
+```text
+separation_gap =
+    min(Unknown distance/radius)
+    -
+    max(Known distance/radius)
+```
+
+Interpretation:
+
+```text
+separation_gap > 0
+    -> no observed overlap between Known and Unknown ratio distributions
+
+separation_gap <= 0
+    -> observed overlap; radius policy requires further study
+```
+
+Detailed results are saved to:
+
+```text
+semantic_integrated_stress_results.csv
+```
