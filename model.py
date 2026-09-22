@@ -174,6 +174,9 @@ class LanguageModel(nn.Module):
             token_ids: [batch, time]
             output   : [batch, time, d_model]
         """
+        if not 0.0 <= hybrid_alpha <= 1.0:
+            raise ValueError("hybrid_alpha must be between 0.0 and 1.0.")
+
         if token_ids.dim() != 2:
             raise ValueError("token_ids must have shape [batch, time].")
 
@@ -187,6 +190,7 @@ class LanguageModel(nn.Module):
         token_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         pooling: str = "mean",
+        hybrid_alpha: float = 0.5,
     ) -> torch.Tensor:
         """Return one semantic vector per input sequence.
 
@@ -196,13 +200,14 @@ class LanguageModel(nn.Module):
             bos       - first token state
             max       - element-wise maximum over token states
             attention - final-block attention-weighted token states
+            hybrid    - alpha * attention + (1-alpha) * last
 
         Shape:
             token_ids      : [batch, time]
             attention_mask : [batch, time] (optional)
             output         : [batch, d_model]
         """
-        supported = {"mean", "last", "bos", "max", "attention"}
+        supported = {"mean", "last", "bos", "max", "attention", "hybrid"}
         if pooling not in supported:
             raise ValueError(
                 f"Unsupported semantic pooling: {pooling}. "
@@ -218,7 +223,7 @@ class LanguageModel(nn.Module):
                 "as token_ids."
             )
 
-        if pooling == "attention":
+        if pooling in {"attention", "hybrid"}:
             x = self.embedding(token_ids)
             final_attention = None
 
@@ -247,9 +252,31 @@ class LanguageModel(nn.Module):
             token_weights = token_weights / (
                 token_weights.sum(dim=1, keepdim=True).clamp_min(1.0e-12)
             )
-            return (
+            attention_vector = (
                 hidden * token_weights.unsqueeze(-1)
             ).sum(dim=1)
+
+            if pooling == "attention":
+                return attention_vector
+
+            if attention_mask is None:
+                last_vector = hidden[:, -1, :]
+            else:
+                lengths = attention_mask.to(
+                    device=hidden.device,
+                    dtype=torch.long,
+                ).sum(dim=1).clamp_min(1)
+                indices = lengths - 1
+                batch_indices = torch.arange(
+                    hidden.size(0),
+                    device=hidden.device,
+                )
+                last_vector = hidden[batch_indices, indices, :]
+
+            return (
+                hybrid_alpha * attention_vector
+                + (1.0 - hybrid_alpha) * last_vector
+            )
 
         hidden = self.encode_hidden(token_ids)
 
