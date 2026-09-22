@@ -1173,3 +1173,54 @@ python semantic_infer.py --text "明日の東京の気温を知りたいです"
 
 This separation makes it possible to continue semantic experiments without
 retraining or overwriting the base LLM checkpoint.
+
+
+## Unknown stress test
+
+LLM_SEM v0.2 includes a multi-category out-of-domain stress test:
+
+```text
+semantic_unknown_stress.py
+unknown_stress_benchmark.csv
+```
+
+The supplied benchmark contains unseen categories such as finance, music, law,
+history, art, and sports. None of these categories are used as known routing
+classes.
+
+Run:
+
+```powershell
+python semantic_unknown_stress.py
+```
+
+The test uses the frozen base LLM and the trained semantic projection, then
+measures each stress sample against the projected known-class centroids and
+class-specific radii.
+
+Key metric:
+
+```text
+distance_radius_ratio = distance_to_nearest_known_centroid / class_radius
+```
+
+Interpretation:
+
+```text
+ratio <= 1.0  -> accepted inside a known-class radius
+ratio >  1.0  -> detected as Unknown
+```
+
+The report includes:
+
+- overall Unknown Detection Rate
+- per-category Unknown Detection Rate
+- nearest known-class attraction counts
+- mean/minimum distance-to-radius ratio
+- per-sample distance, radius, similarity, and decision
+
+Detailed results are written to:
+
+```text
+semantic_unknown_stress_results.csv
+```
