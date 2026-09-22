@@ -814,3 +814,60 @@ python semantic_validation.py --detector global --policy balanced
 This allows a direct comparison between global-threshold open-set detection
 and class-specific semantic-radius detection on the same independent holdout
 benchmarks.
+
+
+## Semantic space analysis
+
+Branch `v0.1` now includes:
+
+```text
+semantic_space_analysis.py
+```
+
+Run:
+
+```powershell
+python semantic_space_analysis.py
+```
+
+The analyzer measures the geometry of the known semantic classes:
+
+- leave-one-out routing accuracy per class
+- class-specific semantic radius
+- mean and maximum within-class distance
+- centroid-to-centroid cosine distance matrix
+- nearest competing semantic class
+- separation ratio
+- overlap risk between class-radius regions
+- most common misclassification destination
+
+The separation ratio is defined as:
+
+```text
+separation_ratio =
+    centroid_distance(class A, class B)
+    /
+    (radius_A + radius_B)
+```
+
+Interpretation:
+
+```text
+separation_ratio < 1.0
+    -> class-radius regions overlap
+
+separation_ratio >= 1.0
+    -> class-radius regions are geometrically separated
+```
+
+Output files:
+
+```text
+semantic_space_summary.csv
+semantic_centroid_distance_matrix.csv
+semantic_space_errors.csv
+```
+
+These diagnostics are intended to identify which known semantic classes are
+poorly separated before changing the semantic-vector representation or adding
+semantic-specific training.
