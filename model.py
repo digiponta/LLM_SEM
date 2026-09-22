@@ -174,9 +174,6 @@ class LanguageModel(nn.Module):
             token_ids: [batch, time]
             output   : [batch, time, d_model]
         """
-        if not 0.0 <= hybrid_alpha <= 1.0:
-            raise ValueError("hybrid_alpha must be between 0.0 and 1.0.")
-
         if token_ids.dim() != 2:
             raise ValueError("token_ids must have shape [batch, time].")
 
@@ -213,6 +210,9 @@ class LanguageModel(nn.Module):
                 f"Unsupported semantic pooling: {pooling}. "
                 f"Choose from {sorted(supported)}"
             )
+
+        if not 0.0 <= hybrid_alpha <= 1.0:
+            raise ValueError("hybrid_alpha must be between 0.0 and 1.0.")
 
         if token_ids.dim() != 2:
             raise ValueError("token_ids must have shape [batch, time].")
