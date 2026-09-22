@@ -73,11 +73,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     parser.add_argument(
+        "--benchmark",
         "--benchmark-json",
+        dest="benchmark_file",
         default=None,
         help=(
-            "Optional JSON file containing a list of "
-            '{"label": "...", "text": "..."} objects.'
+            "Optional benchmark input (.json or .csv). JSON must contain "
+            'a list of {"label": "...", "text": "..."} objects. '
+            "CSV must contain label,text columns. --benchmark-json is kept "
+            "as a backward-compatible alias."
         ),
     )
     parser.add_argument(
@@ -92,16 +96,51 @@ def load_benchmark(filename: str | None) -> List[LabeledSentence]:
     if filename is None:
         return list(DEFAULT_BENCHMARK)
 
-    with open(filename, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-
+    path = Path(filename)
+    suffix = path.suffix.lower()
     result: List[LabeledSentence] = []
-    for item in raw:
-        label = str(item["label"]).strip()
-        text = str(item["text"]).strip()
-        if not label or not text:
-            raise ValueError("Benchmark label/text must not be empty.")
-        result.append(LabeledSentence(label=label, text=text))
+
+    if suffix == ".json":
+        # utf-8-sig also accepts ordinary UTF-8 and safely strips a BOM.
+        with path.open("r", encoding="utf-8-sig") as f:
+            raw = json.load(f)
+
+        for item in raw:
+            label = str(item["label"]).strip()
+            text = str(item["text"]).strip()
+            if not label or not text:
+                raise ValueError("Benchmark label/text must not be empty.")
+            result.append(LabeledSentence(label=label, text=text))
+
+    elif suffix == ".csv":
+        with path.open("r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            fields = set(reader.fieldnames or [])
+
+            if not {"label", "text"}.issubset(fields):
+                if {"label_a", "label_b", "text_a", "text_b"}.issubset(fields):
+                    raise ValueError(
+                        f"{filename} is a pairwise evaluation OUTPUT file, "
+                        "not a benchmark input. Run 'python semantic_eval.py' "
+                        "to use the built-in benchmark, or provide a CSV with "
+                        "exactly the benchmark columns 'label,text'."
+                    )
+                raise ValueError(
+                    "Benchmark CSV must contain columns: label,text"
+                )
+
+            for row in reader:
+                label = str(row["label"]).strip()
+                text = str(row["text"]).strip()
+                if not label or not text:
+                    raise ValueError("Benchmark label/text must not be empty.")
+                result.append(LabeledSentence(label=label, text=text))
+
+    else:
+        raise ValueError(
+            "Benchmark file must be .json or .csv. "
+            "Use --benchmark FILE, or omit it for the built-in benchmark."
+        )
 
     if len(result) < 2:
         raise ValueError("Benchmark must contain at least two sentences.")
@@ -269,7 +308,7 @@ def main() -> None:
     if not Path(args.model).exists():
         raise FileNotFoundError(f"Model checkpoint not found: {args.model}")
 
-    benchmark = load_benchmark(args.benchmark_json)
+    benchmark = load_benchmark(args.benchmark_file)
 
     device = torch.device(
         "cuda" if torch.cuda.is_available() else "cpu"
