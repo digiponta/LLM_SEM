@@ -1345,3 +1345,61 @@ A custom sweep can be run with:
 ```powershell
 python semantic_radius_sweep.py --scales 0.9,1.0,1.05,1.1,1.15,1.2
 ```
+
+
+## Projection architecture sweep
+
+LLM_SEM v0.2 includes a sweep across projection hidden size and geometry
+preservation strength:
+
+```text
+semantic_projection_arch_sweep.py
+```
+
+Run:
+
+```powershell
+python semantic_projection_arch_sweep.py
+```
+
+Default candidates:
+
+```text
+hidden_dim = 32, 64, 128, 256
+lambda     = 0.5, 1.0, 2.0
+```
+
+The base LLM remains frozen for every candidate. Each projection head is
+trained from scratch with the same seed and evaluated with radius_scale=1.0.
+
+Reported metrics include:
+
+- development leave-one-out accuracy
+- geometry drift
+- independent Known base accuracy
+- Known Recall after radius rejection
+- False Unknown Rate
+- Unknown stress detection rate
+- Balanced Accuracy
+
+Candidate selection prioritizes:
+
+```text
+1. highest Balanced Accuracy
+2. highest Known base accuracy
+3. highest development LOO accuracy
+4. highest Unknown Detection Rate
+5. lowest geometry drift
+```
+
+Results are saved to:
+
+```text
+semantic_projection_arch_sweep.csv
+```
+
+A smaller custom sweep can be run with:
+
+```powershell
+python semantic_projection_arch_sweep.py --hidden-dims 64,128 --lambdas 0.5,1.0
+```
