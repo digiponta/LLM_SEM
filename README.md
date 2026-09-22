@@ -990,3 +990,67 @@ Custom regularization can be tested without modifying source code:
 ```powershell
 python semantic_projection_train.py --preservation-lambda 2.0 --epochs 200 --patience 30
 ```
+
+
+## Preservation lambda sweep
+
+Branch `v0.1` now includes a development-only sweep for the projection
+geometry-preservation weight:
+
+```text
+semantic_projection_sweep.py
+```
+
+Run:
+
+```powershell
+python semantic_projection_sweep.py
+```
+
+Default values:
+
+```text
+lambda = 0.0, 0.5, 1.0, 2.0, 5.0
+```
+
+For every lambda, the script trains a fresh projection head with the same seed
+and reports:
+
+- development leave-one-out routing accuracy
+- within-class similarity
+- between-class similarity
+- semantic margin
+- geometry drift from the original semantic vector
+- best training epoch
+- contrastive and preservation losses
+
+The sweep deliberately does not load either holdout benchmark. Candidate
+selection is based only on development metrics:
+
+```text
+1. highest LOO routing accuracy
+2. highest semantic margin
+3. lowest geometry drift
+```
+
+Results are saved to:
+
+```text
+semantic_projection_sweep.csv
+```
+
+Each trained candidate is also saved under:
+
+```text
+model/projection_sweep/
+```
+
+A custom sweep can be run with:
+
+```powershell
+python semantic_projection_sweep.py --lambdas 0.25,0.5,1.0,2.0,4.0
+```
+
+The existing independent holdout sets should not be used to choose lambda.
+After development-only selection, confirm the chosen configuration with a new
+independent test set.
