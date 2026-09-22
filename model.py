@@ -51,6 +51,28 @@ class SelfAttention(nn.Module):
         context = torch.matmul(weights, v)
         return self.out_proj(context)
 
+    def attention_weights(self, x: torch.Tensor) -> torch.Tensor:
+        """Return self-attention weights with shape [batch, query, key]."""
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+
+        scores = torch.matmul(q, k.transpose(-2, -1))
+        scores = scores / math.sqrt(float(self.d_model))
+
+        if self.causal:
+            time = x.size(1)
+            mask = torch.triu(
+                torch.ones(
+                    (time, time),
+                    dtype=torch.bool,
+                    device=x.device,
+                ),
+                diagonal=1,
+            )
+            scores = scores.masked_fill(mask, float("-inf"))
+
+        return F.softmax(scores, dim=-1)
+
 
 class FeedForward(nn.Module):
     def __init__(self, d_model: int, hidden_dim: int):
@@ -164,27 +186,105 @@ class LanguageModel(nn.Module):
         self,
         token_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
+        pooling: str = "mean",
     ) -> torch.Tensor:
         """Return one semantic vector per input sequence.
 
-        The semantic vector is mean-pooled from the final contextual hidden
-        states. If attention_mask is supplied, masked positions are excluded.
+        Supported pooling methods:
+            mean      - mean of contextual token states
+            last      - final token state
+            bos       - first token state
+            max       - element-wise maximum over token states
+            attention - final-block attention-weighted token states
 
         Shape:
             token_ids      : [batch, time]
             attention_mask : [batch, time] (optional)
             output         : [batch, d_model]
         """
-        hidden = self.encode_hidden(token_ids)
+        supported = {"mean", "last", "bos", "max", "attention"}
+        if pooling not in supported:
+            raise ValueError(
+                f"Unsupported semantic pooling: {pooling}. "
+                f"Choose from {sorted(supported)}"
+            )
 
-        if attention_mask is None:
-            return hidden.mean(dim=1)
+        if token_ids.dim() != 2:
+            raise ValueError("token_ids must have shape [batch, time].")
 
-        if attention_mask.shape != token_ids.shape:
+        if attention_mask is not None and attention_mask.shape != token_ids.shape:
             raise ValueError(
                 "attention_mask must have the same [batch, time] shape "
                 "as token_ids."
             )
+
+        if pooling == "attention":
+            x = self.embedding(token_ids)
+            final_attention = None
+
+            for index, block in enumerate(self.blocks):
+                if index == len(self.blocks) - 1:
+                    normalized = block.norm1(x)
+                    final_attention = block.attention.attention_weights(
+                        normalized
+                    )
+                x = block(x)
+
+            hidden = self.final_norm(x)
+            assert final_attention is not None
+
+            # Average over query positions to estimate how strongly each
+            # token is used as a key by the final Transformer block.
+            token_weights = final_attention.mean(dim=1)
+
+            if attention_mask is not None:
+                mask = attention_mask.to(
+                    device=hidden.device,
+                    dtype=hidden.dtype,
+                )
+                token_weights = token_weights * mask
+
+            token_weights = token_weights / (
+                token_weights.sum(dim=1, keepdim=True).clamp_min(1.0e-12)
+            )
+            return (
+                hidden * token_weights.unsqueeze(-1)
+            ).sum(dim=1)
+
+        hidden = self.encode_hidden(token_ids)
+
+        if pooling == "bos":
+            return hidden[:, 0, :]
+
+        if pooling == "last":
+            if attention_mask is None:
+                return hidden[:, -1, :]
+
+            lengths = attention_mask.to(
+                device=hidden.device,
+                dtype=torch.long,
+            ).sum(dim=1).clamp_min(1)
+            indices = lengths - 1
+            batch_indices = torch.arange(
+                hidden.size(0),
+                device=hidden.device,
+            )
+            return hidden[batch_indices, indices, :]
+
+        if pooling == "max":
+            if attention_mask is None:
+                return hidden.max(dim=1).values
+
+            mask = attention_mask.to(
+                device=hidden.device,
+                dtype=torch.bool,
+            ).unsqueeze(-1)
+            masked = hidden.masked_fill(~mask, float("-inf"))
+            return masked.max(dim=1).values
+
+        # mean pooling
+        if attention_mask is None:
+            return hidden.mean(dim=1)
 
         mask = attention_mask.to(
             device=hidden.device,
