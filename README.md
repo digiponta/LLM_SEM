@@ -1290,3 +1290,58 @@ Detailed results are saved to:
 ```text
 semantic_integrated_stress_results.csv
 ```
+
+
+## Radius scale sweep
+
+LLM_SEM v0.2 includes a class-radius scale sweep that does not retrain either
+the base LLM or the semantic projection head:
+
+```text
+semantic_radius_sweep.py
+```
+
+Run:
+
+```powershell
+python semantic_radius_sweep.py
+```
+
+Default sweep:
+
+```text
+scale = 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5
+```
+
+For every radius scale the script reports:
+
+- Known Recall
+- Known Accept Rate
+- False Unknown Rate
+- Unknown Detection Rate
+- False Known Rate
+- Balanced Accuracy
+- maximum Known distance/radius ratio
+- minimum Unknown distance/radius ratio
+- separation gap
+
+Candidate selection uses:
+
+```text
+1. highest Balanced Accuracy
+2. highest Known Recall
+3. highest Unknown Detection Rate
+4. lowest False Unknown Rate
+```
+
+Results are saved to:
+
+```text
+semantic_radius_sweep.csv
+```
+
+A custom sweep can be run with:
+
+```powershell
+python semantic_radius_sweep.py --scales 0.9,1.0,1.05,1.1,1.15,1.2
+```
