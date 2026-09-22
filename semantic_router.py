@@ -112,6 +112,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--alpha", type=float, default=DEFAULT_ALPHA)
     parser.add_argument("--text", default=None)
+    parser.add_argument(
+        "--policy",
+        choices=["known-first", "balanced", "discovery-first"],
+        default=None,
+        help="Apply an automatically selected Known/Unknown routing policy.",
+    )
     parser.add_argument("--evaluate", action="store_true")
     parser.add_argument("--evaluate-unknown", action="store_true")
     parser.add_argument(
@@ -522,6 +528,122 @@ def evaluate_unknown_router(
     print("Unknown evaluation CSV saved:", csv_filename)
 
 
+def build_threshold_rows(
+    known_scores: Sequence[KnownScore],
+    unknown_scores: Sequence[UnknownScore],
+) -> List[Dict[str, float]]:
+    similarities = sorted({
+        round(row.top1_similarity, 6)
+        for row in known_scores
+    } | {
+        round(row.top1_similarity, 6)
+        for row in unknown_scores
+    })
+    margins = sorted({
+        round(row.margin, 6)
+        for row in known_scores
+    } | {
+        round(row.margin, 6)
+        for row in unknown_scores
+    })
+
+    def sample_grid(values: List[float], count: int = 15) -> List[float]:
+        if len(values) <= count:
+            return values
+        return sorted({
+            values[round(i * (len(values) - 1) / (count - 1))]
+            for i in range(count)
+        })
+
+    rows: List[Dict[str, float]] = []
+    for sim_threshold in sample_grid(similarities):
+        for margin_threshold in sample_grid(margins):
+            rows.append(
+                _evaluate_threshold_pair(
+                    known_scores,
+                    unknown_scores,
+                    sim_threshold,
+                    margin_threshold,
+                )
+            )
+    return rows
+
+
+def select_policy_threshold(
+    rows: Sequence[Dict[str, float]],
+    policy: str,
+) -> Dict[str, float]:
+    if not rows:
+        raise ValueError("No threshold rows are available.")
+
+    if policy == "known-first":
+        key = lambda row: (
+            row["known_recall"],
+            row["balanced_accuracy"],
+            row["unknown_detection_rate"],
+            -row["false_unknown_rate"],
+        )
+    elif policy == "balanced":
+        key = lambda row: (
+            row["balanced_accuracy"],
+            row["unknown_detection_rate"],
+            row["known_recall"],
+        )
+    elif policy == "discovery-first":
+        key = lambda row: (
+            row["unknown_detection_rate"],
+            row["balanced_accuracy"],
+            row["known_recall"],
+            -row["false_known_rate"],
+        )
+    else:
+        raise ValueError(f"Unknown policy: {policy}")
+
+    return max(rows, key=key)
+
+
+def get_policy_thresholds(
+    router: SemanticRouter,
+    known_samples: Sequence[LabeledSentence],
+    unknown_samples: Sequence[LabeledSentence],
+    policy: str,
+) -> Dict[str, float]:
+    known_scores = collect_known_loo_scores(router, known_samples)
+    unknown_scores = collect_unknown_scores(
+        router, known_samples, unknown_samples
+    )
+    rows = build_threshold_rows(known_scores, unknown_scores)
+    return select_policy_threshold(rows, policy)
+
+
+def print_policy_summary(
+    policy: str,
+    metrics: Dict[str, float],
+) -> None:
+    print("Policy             :", policy)
+    print(
+        "Similarity threshold:",
+        f"{metrics['similarity_threshold']:.6f}",
+    )
+    print(
+        "Margin threshold    :",
+        f"{metrics['margin_threshold']:.6f}",
+    )
+    print(
+        "Expected Known recall:",
+        f"{metrics['known_recall'] * 100:.2f}%",
+    )
+    print(
+        "Expected Unknown det.:",
+        f"{metrics['unknown_detection_rate'] * 100:.2f}%",
+    )
+    print(
+        "Expected Balanced acc:",
+        f"{metrics['balanced_accuracy'] * 100:.2f}%",
+    )
+    print()
+
+
 def sweep_unknown_thresholds(
     router: SemanticRouter,
     known_samples: Sequence[LabeledSentence],
@@ -533,58 +655,7 @@ def sweep_unknown_thresholds(
         router, known_samples, unknown_samples
     )
 
-    similarities = sorted(
-        {round(row.top1_similarity, 6) for row in known_scores + [
-            KnownScore(
-                expected="unknown",
-                predicted=row.top1_label,
-                top1_similarity=row.top1_similarity,
-                top2_similarity=row.top2_similarity,
-                margin=row.margin,
-                correct=False,
-                text=row.text,
-            )
-            for row in unknown_scores
-        ]}
-    )
-    margins = sorted(
-        {round(row.margin, 6) for row in known_scores + [
-            KnownScore(
-                expected="unknown",
-                predicted=row.top1_label,
-                top1_similarity=row.top1_similarity,
-                top2_similarity=row.top2_similarity,
-                margin=row.margin,
-                correct=False,
-                text=row.text,
-            )
-            for row in unknown_scores
-        ]}
-    )
-
-    # Use compact quantile-like grids instead of every unique value.
-    def sample_grid(values: List[float], count: int = 15) -> List[float]:
-        if len(values) <= count:
-            return values
-        return sorted({
-            values[round(i * (len(values) - 1) / (count - 1))]
-            for i in range(count)
-        })
-
-    similarity_grid = sample_grid(similarities)
-    margin_grid = sample_grid(margins)
-
-    rows: List[Dict[str, float]] = []
-    for sim_threshold in similarity_grid:
-        for margin_threshold in margin_grid:
-            rows.append(
-                _evaluate_threshold_pair(
-                    known_scores,
-                    unknown_scores,
-                    sim_threshold,
-                    margin_threshold,
-                )
-            )
+    rows = build_threshold_rows(known_scores, unknown_scores)
 
     rows.sort(
         key=lambda row: (
@@ -664,7 +735,7 @@ def main() -> None:
             raise FileNotFoundError(f"{label} not found: {filename}")
 
     if (
-        args.evaluate_unknown or args.sweep_thresholds
+        args.evaluate_unknown or args.sweep_thresholds or args.policy
     ) and not Path(args.unknown_benchmark).exists():
         raise FileNotFoundError(
             f"Unknown benchmark not found: {args.unknown_benchmark}"
@@ -727,6 +798,17 @@ def main() -> None:
         evaluate_router(router, samples, args.eval_csv)
         return
 
+    policy_metrics = None
+    if args.policy:
+        unknown_samples = load_benchmark(args.unknown_benchmark)
+        policy_metrics = get_policy_thresholds(
+            router,
+            samples,
+            unknown_samples,
+            args.policy,
+        )
+        print_policy_summary(args.policy, policy_metrics)
+
     router.fit(samples)
     labels = sorted(router.centroids.keys())
     print("Routes     :", ", ".join(labels))
@@ -745,7 +827,17 @@ def main() -> None:
                 continue
             results = router.route(text)
             print()
-            print("Selected route:", results[0].label)
+            selected = results[0].label
+            if policy_metrics is not None:
+                margin = results[0].similarity - results[1].similarity
+                if _unknown_decision(
+                    results[0].similarity,
+                    margin,
+                    policy_metrics["similarity_threshold"],
+                    policy_metrics["margin_threshold"],
+                ):
+                    selected = "unknown"
+            print("Selected route:", selected)
             print("Candidates")
             for result in results[: max(1, args.top_k)]:
                 print(
@@ -758,8 +850,18 @@ def main() -> None:
 
     for text in texts:
         results = router.route(text)
+        selected = results[0].label
+        if policy_metrics is not None:
+            margin = results[0].similarity - results[1].similarity
+            if _unknown_decision(
+                results[0].similarity,
+                margin,
+                policy_metrics["similarity_threshold"],
+                policy_metrics["margin_threshold"],
+            ):
+                selected = "unknown"
         print("Text          :", text)
-        print("Selected route:", results[0].label)
+        print("Selected route:", selected)
         print("Candidates")
         for result in results[: max(1, args.top_k)]:
             print(
