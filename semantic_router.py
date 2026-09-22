@@ -30,6 +30,7 @@ from tokenizer import Tokenizer
 DEFAULT_MODEL = "model/model-gpu-v0.4.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_BENCHMARK = "my_benchmark.csv"
+DEFAULT_UNKNOWN_BENCHMARK = "unknown_benchmark.csv"
 DEFAULT_ALPHA = 0.35
 
 
@@ -116,12 +117,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     parser.add_argument("--benchmark", default=DEFAULT_BENCHMARK)
+    parser.add_argument(
+        "--unknown-benchmark",
+        default=DEFAULT_UNKNOWN_BENCHMARK,
+        help="Unknown-category benchmark CSV/JSON.",
+    )
     parser.add_argument("--alpha", type=float, default=DEFAULT_ALPHA)
     parser.add_argument("--text", default=None)
     parser.add_argument(
         "--evaluate",
         action="store_true",
         help="Run leave-one-out routing evaluation on the benchmark.",
+    )
+    parser.add_argument(
+        "--evaluate-unknown",
+        action="store_true",
+        help=(
+            "Evaluate Known/Unknown routing using the known benchmark to "
+            "derive thresholds and a separate unknown benchmark."
+        ),
     )
     parser.add_argument(
         "--eval-csv",
@@ -291,6 +305,208 @@ def evaluate_router(
     print("Evaluation CSV saved:", csv_filename)
 
 
+def derive_unknown_thresholds(
+    router: SemanticRouter,
+    samples: Sequence[LabeledSentence],
+) -> tuple[float, float]:
+    vectors = [router._encode_tensor(sample.text) for sample in samples]
+    correct_top1: List[float] = []
+    correct_margin: List[float] = []
+
+    for index, sample in enumerate(samples):
+        train_samples = [
+            other for j, other in enumerate(samples) if j != index
+        ]
+        train_vectors = [
+            vector for j, vector in enumerate(vectors) if j != index
+        ]
+        centroids = _centroids_from_vectors(train_samples, train_vectors)
+
+        query = vectors[index]
+        ranked = []
+        for label, centroid in centroids.items():
+            similarity = float(
+                F.cosine_similarity(query, centroid, dim=0).item()
+            )
+            ranked.append((label, similarity))
+        ranked.sort(key=lambda item: item[1], reverse=True)
+
+        predicted = ranked[0][0]
+        top1 = ranked[0][1]
+        top2 = ranked[1][1]
+        margin = top1 - top2
+
+        if predicted == sample.label:
+            correct_top1.append(top1)
+            correct_margin.append(margin)
+
+    if not correct_top1 or not correct_margin:
+        raise RuntimeError(
+            "Could not derive Unknown thresholds from correct known routes."
+        )
+
+    sorted_top1 = sorted(correct_top1)
+    sorted_margin = sorted(correct_margin)
+    q10_top1 = max(0, int(0.10 * (len(sorted_top1) - 1)))
+    q10_margin = max(0, int(0.10 * (len(sorted_margin) - 1)))
+
+    return sorted_top1[q10_top1], sorted_margin[q10_margin]
+
+
+def is_unknown(
+    results: Sequence[RouteResult],
+    similarity_threshold: float,
+    margin_threshold: float,
+) -> tuple[bool, float]:
+    if len(results) < 2:
+        raise ValueError("At least two routes are required for Unknown detection.")
+
+    margin = results[0].similarity - results[1].similarity
+    unknown = (
+        results[0].similarity < similarity_threshold
+        or margin < margin_threshold
+    )
+    return unknown, margin
+
+
+def evaluate_unknown_router(
+    router: SemanticRouter,
+    known_samples: Sequence[LabeledSentence],
+    unknown_samples: Sequence[LabeledSentence],
+    csv_filename: str,
+) -> None:
+    similarity_threshold, margin_threshold = derive_unknown_thresholds(
+        router,
+        known_samples,
+    )
+
+    router.fit(list(known_samples))
+
+    rows = []
+    known_correct = 0
+    known_false_unknown = 0
+    unknown_detected = 0
+    unknown_false_known = 0
+
+    for sample in known_samples:
+        results = router.route(sample.text)
+        unknown, margin = is_unknown(
+            results,
+            similarity_threshold,
+            margin_threshold,
+        )
+        predicted = "unknown" if unknown else results[0].label
+
+        if unknown:
+            known_false_unknown += 1
+        elif predicted == sample.label:
+            known_correct += 1
+
+        rows.append(
+            {
+                "source": "known",
+                "expected": sample.label,
+                "predicted": predicted,
+                "unknown": unknown,
+                "top1_label": results[0].label,
+                "top1_similarity": results[0].similarity,
+                "top2_similarity": results[1].similarity,
+                "top1_top2_margin": margin,
+                "text": sample.text,
+            }
+        )
+
+    for sample in unknown_samples:
+        results = router.route(sample.text)
+        unknown, margin = is_unknown(
+            results,
+            similarity_threshold,
+            margin_threshold,
+        )
+        predicted = "unknown" if unknown else results[0].label
+
+        if unknown:
+            unknown_detected += 1
+        else:
+            unknown_false_known += 1
+
+        rows.append(
+            {
+                "source": "unknown",
+                "expected": sample.label,
+                "predicted": predicted,
+                "unknown": unknown,
+                "top1_label": results[0].label,
+                "top1_similarity": results[0].similarity,
+                "top2_similarity": results[1].similarity,
+                "top1_top2_margin": margin,
+                "text": sample.text,
+            }
+        )
+
+    known_total = len(known_samples)
+    unknown_total = len(unknown_samples)
+    known_accept_rate = (
+        (known_total - known_false_unknown) / known_total
+        if known_total
+        else 0.0
+    )
+    known_routing_accuracy = (
+        known_correct / known_total if known_total else 0.0
+    )
+    unknown_detection_rate = (
+        unknown_detected / unknown_total if unknown_total else 0.0
+    )
+    false_unknown_rate = (
+        known_false_unknown / known_total if known_total else 0.0
+    )
+    false_known_rate = (
+        unknown_false_known / unknown_total if unknown_total else 0.0
+    )
+
+    path = Path(csv_filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print()
+    print("============================================================")
+    print(" Known / Unknown Semantic Routing Evaluation")
+    print("============================================================")
+    print()
+    print("Known samples          :", known_total)
+    print("Unknown samples        :", unknown_total)
+    print("Similarity threshold   :", f"{similarity_threshold:.6f}")
+    print("Margin threshold       :", f"{margin_threshold:.6f}")
+    print()
+    print("Known routing accuracy :", f"{known_routing_accuracy * 100.0:.2f}%")
+    print("Known accept rate      :", f"{known_accept_rate * 100.0:.2f}%")
+    print("Unknown detection rate :", f"{unknown_detection_rate * 100.0:.2f}%")
+    print("False Unknown rate     :", f"{false_unknown_rate * 100.0:.2f}%")
+    print("False Known rate       :", f"{false_known_rate * 100.0:.2f}%")
+    print()
+
+    print("Unknown category breakdown")
+    print("--------------------------")
+    grouped: Dict[str, List[bool]] = defaultdict(list)
+    for row in rows:
+        if row["source"] == "unknown":
+            grouped[str(row["expected"])].append(bool(row["unknown"]))
+
+    for label in sorted(grouped):
+        values = grouped[label]
+        detected = sum(int(value) for value in values)
+        print(
+            f"{label:<12} {detected:>2}/{len(values):<2} "
+            f"{detected / len(values) * 100.0:>6.2f}%"
+        )
+
+    print()
+    print("Unknown evaluation CSV saved:", csv_filename)
+
+
 def main() -> None:
     args = parse_args()
 
@@ -300,6 +516,10 @@ def main() -> None:
         raise FileNotFoundError(f"Tokenizer not found: {args.tokenizer}")
     if not Path(args.benchmark).exists():
         raise FileNotFoundError(f"Benchmark not found: {args.benchmark}")
+    if args.evaluate_unknown and not Path(args.unknown_benchmark).exists():
+        raise FileNotFoundError(
+            f"Unknown benchmark not found: {args.unknown_benchmark}"
+        )
     if not 0.0 <= args.alpha <= 1.0:
         raise ValueError("alpha must be between 0.0 and 1.0.")
 
@@ -335,6 +555,16 @@ def main() -> None:
         alpha=args.alpha,
     )
     router.fit(samples)
+
+    if args.evaluate_unknown:
+        unknown_samples = load_benchmark(args.unknown_benchmark)
+        evaluate_unknown_router(
+            router=router,
+            known_samples=samples,
+            unknown_samples=unknown_samples,
+            csv_filename="semantic_unknown_eval.csv",
+        )
+        return
 
     if args.evaluate:
         evaluate_router(
