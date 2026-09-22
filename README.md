@@ -1403,3 +1403,70 @@ A smaller custom sweep can be run with:
 ```powershell
 python semantic_projection_arch_sweep.py --hidden-dims 64,128 --lambdas 0.5,1.0
 ```
+
+
+## Expanded semantic training dataset
+
+LLM_SEM v0.2 now includes a deterministic semantic dataset expansion utility:
+
+```text
+semantic_dataset_expand.py
+```
+
+It generates a balanced starter dataset with:
+
+```text
+6 known classes x 50 samples = 300 samples
+```
+
+Classes:
+
+```text
+animal
+computer
+food
+science
+transport
+weather
+```
+
+Run:
+
+```powershell
+python semantic_dataset_expand.py
+```
+
+Output:
+
+```text
+data_semantic/semantic_all_300.csv
+data_semantic/semantic_train_180.csv
+data_semantic/semantic_validation_60.csv
+data_semantic/semantic_test_60.csv
+```
+
+The split is stratified:
+
+```text
+per class:
+  train      30
+  validation 10
+  test       10
+
+total:
+  train      180
+  validation  60
+  test        60
+```
+
+The next projection-training experiment can use:
+
+```powershell
+python semantic_projection_train.py --benchmark data_semantic/semantic_train_180.csv --preservation-lambda 1.0 --seed 42 --output model/semantic-projection-expanded.pt
+```
+
+Important: these 300 examples are deterministic synthetic expansions built from
+class-specific topics and sentence templates. They are intended to reduce the
+very small training-sample problem and support regression experiments. The
+generated validation/test splits are not a substitute for the existing
+separately authored independent holdout datasets.
