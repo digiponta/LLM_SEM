@@ -574,3 +574,60 @@ semantic_unknown_threshold_sweep.csv
 
 The best threshold pair is selected by Balanced Accuracy, with Unknown
 Detection Rate and Known Recall used as secondary tie-break criteria.
+
+
+## Routing policies
+
+The semantic router now supports three automatic Known/Unknown threshold
+policies derived from the threshold sweep:
+
+```text
+known-first
+balanced
+discovery-first
+```
+
+Policy selection criteria:
+
+```text
+known-first:
+  maximize Known Recall first
+
+balanced:
+  maximize Balanced Accuracy first
+
+discovery-first:
+  maximize Unknown Detection Rate first
+```
+
+Apply a policy to a single input:
+
+```powershell
+python semantic_router.py --policy balanced --text "明日の東京の気温を知りたいです"
+```
+
+Examples:
+
+```powershell
+python semantic_router.py --policy known-first --text "猫は動物です"
+python semantic_router.py --policy balanced --text "株価について調べたいです"
+python semantic_router.py --policy discovery-first --text "ピアノで和音を演奏します"
+```
+
+The router prints the automatically selected similarity and margin thresholds,
+their expected benchmark metrics, and then routes the input either to a known
+semantic class or to:
+
+```text
+unknown
+```
+
+Interactive routing can also use a policy:
+
+```powershell
+python semantic_router.py --policy discovery-first
+```
+
+This provides an operational prototype for switching Semantic OS behavior
+between preserving known routes and aggressively forwarding uncertain semantic
+tasks to an Unknown / Discovery VM.
