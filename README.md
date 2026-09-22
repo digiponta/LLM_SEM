@@ -871,3 +871,67 @@ semantic_space_errors.csv
 These diagnostics are intended to identify which known semantic classes are
 poorly separated before changing the semantic-vector representation or adding
 semantic-specific training.
+
+
+## Semantic projection head
+
+Branch `v0.1` now includes a trainable semantic projection stage above the
+frozen base language model.
+
+Architecture:
+
+```text
+Frozen LLM
+  |
+64-D raw hybrid semantic vector
+  |
+SemanticProjectionHead
+  64 -> 128 -> 64
+  |
+L2-normalized projected semantic vector
+```
+
+Files:
+
+```text
+semantic_projection.py
+semantic_projection_train.py
+semantic_projection_eval.py
+```
+
+The projection head uses a residual MLP and is trained with supervised
+contrastive loss. The base LLM checkpoint is never updated.
+
+Train:
+
+```powershell
+python semantic_projection_train.py
+```
+
+Default output:
+
+```text
+model/semantic-projection-v0.1.pt
+```
+
+Evaluate before/after projection:
+
+```powershell
+python semantic_projection_eval.py
+```
+
+The evaluation reports:
+
+- development leave-one-out routing accuracy
+- within-class cosine similarity
+- between-class cosine similarity
+- semantic margin
+- mean nearest-centroid distance
+- independent holdout Known routing accuracy
+- Known Recall
+- Unknown Detection Rate
+- False Unknown / False Known rates
+- Balanced Accuracy
+
+The intended goal is to reduce overlap between known semantic classes while
+preserving or improving independent open-set detection.
