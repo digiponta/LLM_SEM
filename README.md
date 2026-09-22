@@ -1,6 +1,6 @@
-# LLM_GPU
+# LLM_SEM
 
-CUDA/PyTorch GPU version of the homemade LLM project.
+CUDA/PyTorch semantic-extension version of the homemade LLM project.
 
 This repository is based on the architecture and end-to-end flow proven in
 `digiponta/LLM` branch `v0.3`. The original educational virtual-GPU runtime
@@ -142,3 +142,70 @@ corpus -> tokenizer -> model forward -> loss -> backward
 
 LLM_GPU preserves that path while moving tensor computation and gradient
 calculation to a physical CUDA GPU.
+
+
+## Semantic extension
+
+LLM_SEM adds an explicit semantic representation on top of the trained
+Transformer hidden states.
+
+```text
+Text
+  |
+Tokenizer
+  |
+Token IDs
+  |
+Embedding
+  |
+Transformer blocks
+  |
+Final contextual hidden states [batch, time, d_model]
+  |
+Mean pooling
+  |
+Semantic Vector [batch, d_model]
+  |
+SemanticData
+```
+
+### Semantic API
+
+`model.py` now provides:
+
+```python
+hidden = model.encode_hidden(token_ids)
+semantic_vector = model.encode_semantic(token_ids)
+```
+
+With the current default model, the semantic vector dimension is
+`d_model = 64`.
+
+`semantic.py` defines the explicit exported structure:
+
+```text
+SemanticData
+  - text
+  - vector
+  - dimension
+  - token_count
+  - model_type
+  - confidence
+```
+
+It also provides cosine similarity and cosine semantic distance.
+
+### Semantic experiment
+
+After placing the existing tokenizer and trained checkpoint under `model/`:
+
+```powershell
+python semantic_demo.py
+```
+
+The demo converts several Japanese sentences into semantic vectors and
+compares them using cosine similarity and semantic distance.
+
+This is the first implementation stage. Meaning, intent, purpose, metadata,
+and learned semantic routing are not yet explicitly inferred; the current
+SemanticData vector is derived from the Transformer's contextual hidden state.
