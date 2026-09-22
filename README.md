@@ -935,3 +935,58 @@ The evaluation reports:
 
 The intended goal is to reduce overlap between known semantic classes while
 preserving or improving independent open-set detection.
+
+
+## Regularized semantic projection training
+
+The projection trainer now includes geometry preservation and early stopping
+to reduce overfitting to the small development benchmark.
+
+New training objective:
+
+```text
+Total Loss =
+    Supervised Contrastive Loss
+    +
+    preservation_lambda * Preservation Loss
+```
+
+where:
+
+```text
+Preservation Loss =
+    mean(1 - cosine(projected_vector, original_vector))
+```
+
+New default settings:
+
+```text
+hidden_dim            = 64
+epochs                = 100
+learning_rate         = 1e-4
+preservation_lambda   = 1.0
+patience              = 20
+min_delta             = 1e-4
+```
+
+Train:
+
+```powershell
+python semantic_projection_train.py
+```
+
+Then evaluate:
+
+```powershell
+python semantic_projection_eval.py
+```
+
+The trainer prints total loss, contrastive loss, preservation loss, and the
+best epoch. Early stopping restores the best projection checkpoint before
+saving.
+
+Custom regularization can be tested without modifying source code:
+
+```powershell
+python semantic_projection_train.py --preservation-lambda 2.0 --epochs 200 --patience 30
+```
