@@ -481,3 +481,51 @@ Per-sample evaluation results are saved to:
 ```text
 semantic_router_eval.csv
 ```
+
+
+## Unknown / Discovery route evaluation
+
+A separate unknown-category benchmark is included:
+
+```text
+unknown_benchmark.csv
+```
+
+It contains examples from categories that are not part of the six known
+routing classes.
+
+Run:
+
+```powershell
+python semantic_router.py --evaluate-unknown
+```
+
+The evaluation derives the Unknown thresholds from leave-one-out routing on
+the known benchmark, then evaluates the separate unknown benchmark.
+
+Reported metrics:
+
+- Known routing accuracy
+- Known accept rate
+- Unknown detection rate
+- False Unknown rate
+- False Known rate
+- Unknown detection rate by unknown category
+
+Per-sample results are saved to:
+
+```text
+semantic_unknown_eval.csv
+```
+
+The current candidate decision rule is:
+
+```text
+Unknown if:
+  Top-1 similarity < similarity threshold
+  OR
+  Top-1/Top-2 margin < margin threshold
+```
+
+This provides a prototype path from ordinary semantic routing to an
+Unknown / Discovery route.
