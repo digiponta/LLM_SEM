@@ -1113,3 +1113,63 @@ semantic_projection_multiseed_summary.csv
 
 The script intentionally does not load any holdout benchmark. The selected
 configuration should be confirmed only with a fresh independent test set.
+
+
+## v0.2 reproducible projection workflow
+
+The base language model remains frozen. Only the semantic projection head is
+trained again.
+
+Recommended sequence:
+
+```powershell
+python semantic_projection_multiseed.py
+python semantic_projection_train.py --preservation-lambda 1.0 --seed 42 --output model/semantic-projection-v0.2.pt
+python semantic_projection_eval.py --projection model/semantic-projection-v0.2.pt
+python semantic_infer.py --projection model/semantic-projection-v0.2.pt
+```
+
+The model artifacts are intentionally separated:
+
+```text
+model/
+  tokenizer.json
+  model-gpu-v0.4.pt
+  semantic-projection-v0.2.pt
+```
+
+The operational semantic path is:
+
+```text
+Input text
+   |
+Tokenizer
+   |
+Frozen LLM_GPU v0.4
+   |
+64-D raw hybrid semantic vector
+   |
+LLM_SEM v0.2 SemanticProjectionHead
+   |
+64-D projected semantic vector
+   |
+Projected class centroids
+   |
+Class-specific semantic radius
+   |
+Known semantic class / Unknown
+```
+
+`semantic_infer.py` loads the frozen base checkpoint and the projection
+checkpoint separately. It rebuilds projected class centroids and class radii
+from the development benchmark, then classifies an input without modifying the
+base LLM.
+
+Single-input example:
+
+```powershell
+python semantic_infer.py --text "明日の東京の気温を知りたいです"
+```
+
+This separation makes it possible to continue semantic experiments without
+retraining or overwriting the base LLM checkpoint.
