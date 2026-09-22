@@ -22,7 +22,8 @@ class SemanticData:
     vector: List[float]
     dimension: int
     token_count: int
-    model_type: str = "transformer-hidden-mean"
+    model_type: str = "transformer-hidden"
+    pooling: str = "mean"
     confidence: Optional[float] = None
 
 
@@ -31,6 +32,7 @@ def encode_text(
     model: LanguageModel,
     tokenizer: Tokenizer,
     text: str,
+    pooling: str = "mean",
 ) -> SemanticData:
     """Convert text into one contextual semantic vector."""
     if not text:
@@ -46,7 +48,10 @@ def encode_text(
         device=device,
     )
 
-    semantic = model.encode_semantic(tensor)[0]
+    semantic = model.encode_semantic(
+        tensor,
+        pooling=pooling,
+    )[0]
     vector = semantic.detach().cpu().tolist()
 
     return SemanticData(
@@ -54,6 +59,7 @@ def encode_text(
         vector=vector,
         dimension=len(vector),
         token_count=len(token_ids),
+        pooling=pooling,
     )
 
 
