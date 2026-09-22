@@ -529,3 +529,48 @@ Unknown if:
 
 This provides a prototype path from ordinary semantic routing to an
 Unknown / Discovery route.
+
+
+## Threshold sweep without Known-sample leakage
+
+The Known/Unknown evaluation now uses leave-one-out centroids for every known
+sample. This removes the earlier optimistic bias caused by evaluating a known
+sample against a centroid that included that same sample.
+
+Run the corrected Known/Unknown evaluation:
+
+```powershell
+python semantic_router.py --evaluate-unknown
+```
+
+The report now includes:
+
+- Known recall
+- Known accept rate
+- Unknown detection rate
+- False Unknown rate
+- False Known rate
+- Balanced accuracy
+
+To search similarity and margin thresholds:
+
+```powershell
+python semantic_router.py --sweep-thresholds
+```
+
+The sweep compares threshold pairs using:
+
+```text
+Balanced Accuracy =
+    (Known Recall + Unknown Detection Rate) / 2
+```
+
+The top threshold combinations are printed, and all evaluated combinations are
+saved to:
+
+```text
+semantic_unknown_threshold_sweep.csv
+```
+
+The best threshold pair is selected by Balanced Accuracy, with Unknown
+Detection Rate and Known Recall used as secondary tie-break criteria.
