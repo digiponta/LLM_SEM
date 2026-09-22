@@ -24,6 +24,7 @@ class SemanticData:
     token_count: int
     model_type: str = "transformer-hidden"
     pooling: str = "mean"
+    hybrid_alpha: Optional[float] = None
     confidence: Optional[float] = None
 
 
@@ -33,6 +34,7 @@ def encode_text(
     tokenizer: Tokenizer,
     text: str,
     pooling: str = "mean",
+    hybrid_alpha: float = 0.5,
 ) -> SemanticData:
     """Convert text into one contextual semantic vector."""
     if not text:
@@ -51,6 +53,7 @@ def encode_text(
     semantic = model.encode_semantic(
         tensor,
         pooling=pooling,
+        hybrid_alpha=hybrid_alpha,
     )[0]
     vector = semantic.detach().cpu().tolist()
 
@@ -60,6 +63,7 @@ def encode_text(
         dimension=len(vector),
         token_count=len(token_ids),
         pooling=pooling,
+        hybrid_alpha=(hybrid_alpha if pooling == "hybrid" else None),
     )
 
 
