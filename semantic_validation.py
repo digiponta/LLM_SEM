@@ -22,6 +22,12 @@ import torch
 
 from model import LanguageModel
 from semantic_eval import LabeledSentence, load_benchmark
+from semantic_radius import (
+    DEFAULT_RADIUS_QUANTILE,
+    DEFAULT_RADIUS_SCALE,
+    classify_with_class_radius,
+    fit_class_radii,
+)
 from semantic_router import (
     DEFAULT_ALPHA,
     DEFAULT_BALANCED_MIN_KNOWN_RECALL,
@@ -64,9 +70,26 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_UNKNOWN_HOLDOUT,
     )
     parser.add_argument(
+        "--detector",
+        choices=["global", "class-radius"],
+        default="class-radius",
+        help="Unknown detector used for final holdout validation.",
+    )
+    parser.add_argument(
         "--policy",
         choices=["known-first", "balanced", "discovery-first"],
         default="balanced",
+        help="Global-threshold policy when --detector global is used.",
+    )
+    parser.add_argument(
+        "--radius-quantile",
+        type=float,
+        default=DEFAULT_RADIUS_QUANTILE,
+    )
+    parser.add_argument(
+        "--radius-scale",
+        type=float,
+        default=DEFAULT_RADIUS_SCALE,
     )
     parser.add_argument(
         "--balanced-min-known-recall",
@@ -84,20 +107,35 @@ def validate(
     development_unknown: List[LabeledSentence],
     known_holdout: List[LabeledSentence],
     unknown_holdout: List[LabeledSentence],
+    detector: str,
     policy: str,
     balanced_min_known_recall: float,
+    radius_quantile: float,
+    radius_scale: float,
     output_filename: str,
 ) -> None:
-    policy_metrics = get_policy_thresholds(
-        router,
-        development_known,
-        development_unknown,
-        policy,
-        balanced_min_known_recall=balanced_min_known_recall,
-    )
+    policy_metrics = None
+    similarity_threshold = None
+    margin_threshold = None
+    class_radii = None
 
-    similarity_threshold = policy_metrics["similarity_threshold"]
-    margin_threshold = policy_metrics["margin_threshold"]
+    if detector == "global":
+        policy_metrics = get_policy_thresholds(
+            router,
+            development_known,
+            development_unknown,
+            policy,
+            balanced_min_known_recall=balanced_min_known_recall,
+        )
+        similarity_threshold = policy_metrics["similarity_threshold"]
+        margin_threshold = policy_metrics["margin_threshold"]
+    else:
+        class_radii = fit_class_radii(
+            router,
+            development_known,
+            quantile=radius_quantile,
+            scale=radius_scale,
+        )
 
     # Fit known centroids using development known data only.
     router.fit(development_known)
@@ -118,12 +156,19 @@ def validate(
         top1 = ranked[0]
         top2 = ranked[1]
         margin = top1.similarity - top2.similarity
-        rejected = _unknown_decision(
-            top1.similarity,
-            margin,
-            similarity_threshold,
-            margin_threshold,
-        )
+        if detector == "global":
+            rejected = _unknown_decision(
+                top1.similarity,
+                margin,
+                float(similarity_threshold),
+                float(margin_threshold),
+            )
+            radius = None
+        else:
+            rejected, radius = classify_with_class_radius(
+                ranked,
+                class_radii,
+            )
 
         base_correct = top1.label == sample.label
         if base_correct:
@@ -151,6 +196,7 @@ def validate(
                 "top2_similarity": top2.similarity,
                 "top1_top2_margin": margin,
                 "unknown": rejected,
+                "class_radius": radius,
                 "correct": predicted == sample.label,
                 "text": sample.text,
             }
@@ -168,12 +214,19 @@ def validate(
         top1 = ranked[0]
         top2 = ranked[1]
         margin = top1.similarity - top2.similarity
-        rejected = _unknown_decision(
-            top1.similarity,
-            margin,
-            similarity_threshold,
-            margin_threshold,
-        )
+        if detector == "global":
+            rejected = _unknown_decision(
+                top1.similarity,
+                margin,
+                float(similarity_threshold),
+                float(margin_threshold),
+            )
+            radius = None
+        else:
+            rejected, radius = classify_with_class_radius(
+                ranked,
+                class_radii,
+            )
 
         unknown_class_total[sample.label] += 1
 
@@ -195,6 +248,7 @@ def validate(
                 "top2_similarity": top2.similarity,
                 "top1_top2_margin": margin,
                 "unknown": rejected,
+                "class_radius": radius,
                 "correct": rejected,
                 "text": sample.text,
             }
@@ -238,6 +292,7 @@ def validate(
                 "top2_similarity",
                 "top1_top2_margin",
                 "unknown",
+                "class_radius",
                 "correct",
                 "text",
             ],
@@ -250,35 +305,50 @@ def validate(
     print(" Independent Holdout Semantic Validation")
     print("============================================================")
     print()
-    print("Policy                   :", policy)
-    if policy == "balanced":
+    print("Detector                 :", detector)
+    if detector == "global":
+        print("Policy                   :", policy)
+        if policy == "balanced":
+            print(
+                "Min development Known Recall:",
+                f"{balanced_min_known_recall * 100.0:.2f}%",
+            )
         print(
-            "Min development Known Recall:",
-            f"{balanced_min_known_recall * 100.0:.2f}%",
+            "Fixed similarity threshold:",
+            f"{float(similarity_threshold):.6f}",
         )
-    print(
-        "Fixed similarity threshold:",
-        f"{similarity_threshold:.6f}",
-    )
-    print(
-        "Fixed margin threshold    :",
-        f"{margin_threshold:.6f}",
-    )
-    print()
-    print("Development policy metrics")
-    print("--------------------------")
-    print(
-        "Expected Known Recall     :",
-        f"{policy_metrics['known_recall'] * 100.0:.2f}%",
-    )
-    print(
-        "Expected Unknown Detection:",
-        f"{policy_metrics['unknown_detection_rate'] * 100.0:.2f}%",
-    )
-    print(
-        "Expected Balanced Accuracy:",
-        f"{policy_metrics['balanced_accuracy'] * 100.0:.2f}%",
-    )
+        print(
+            "Fixed margin threshold    :",
+            f"{float(margin_threshold):.6f}",
+        )
+        print()
+        print("Development policy metrics")
+        print("--------------------------")
+        print(
+            "Expected Known Recall     :",
+            f"{policy_metrics['known_recall'] * 100.0:.2f}%",
+        )
+        print(
+            "Expected Unknown Detection:",
+            f"{policy_metrics['unknown_detection_rate'] * 100.0:.2f}%",
+        )
+        print(
+            "Expected Balanced Accuracy:",
+            f"{policy_metrics['balanced_accuracy'] * 100.0:.2f}%",
+        )
+    else:
+        print("Radius quantile          :", f"{radius_quantile:.2f}")
+        print("Radius scale             :", f"{radius_scale:.2f}")
+        print()
+        print("Class semantic radii")
+        print("--------------------")
+        for label in sorted(class_radii):
+            stats = class_radii[label]
+            print(
+                f"{label:<12} radius={stats.radius:.6f} "
+                f"mean={stats.mean_distance:.6f} "
+                f"max={stats.max_distance:.6f}"
+            )
     print()
     print("Independent holdout metrics")
     print("---------------------------")
@@ -359,6 +429,10 @@ def main() -> None:
         raise ValueError(
             "balanced-min-known-recall must be between 0.0 and 1.0."
         )
+    if not 0.0 <= args.radius_quantile <= 1.0:
+        raise ValueError("radius-quantile must be between 0.0 and 1.0.")
+    if args.radius_scale <= 0.0:
+        raise ValueError("radius-scale must be > 0.")
 
     device = torch.device(
         "cuda" if torch.cuda.is_available() else "cpu"
@@ -402,8 +476,11 @@ def main() -> None:
         development_unknown=development_unknown,
         known_holdout=known_holdout,
         unknown_holdout=unknown_holdout,
+        detector=args.detector,
         policy=args.policy,
         balanced_min_known_recall=args.balanced_min_known_recall,
+        radius_quantile=args.radius_quantile,
+        radius_scale=args.radius_scale,
         output_filename=args.output,
     )
 
