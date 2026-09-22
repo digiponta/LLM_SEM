@@ -261,3 +261,51 @@ JSON format:
 The purpose of this experiment is to determine how much semantic information
 can be extracted from the existing next-token language model before adding
 semantic-specific training objectives.
+
+
+## Semantic pooling comparison
+
+The semantic evaluator can now compare five pooling strategies without
+retraining the language model:
+
+- `mean`
+- `last`
+- `bos`
+- `max`
+- `attention`
+
+Run all methods on the repository benchmark:
+
+```powershell
+python semantic_eval.py --benchmark my_benchmark.csv
+```
+
+The output includes a comparison table with:
+
+- within-class cosine similarity
+- between-class cosine similarity
+- semantic margin
+- 1-NN label accuracy
+
+Detailed pairwise results are written to:
+
+```text
+semantic_eval_results.csv
+```
+
+The method comparison is written to:
+
+```text
+semantic_eval_summary.csv
+```
+
+To evaluate one pooling method only:
+
+```powershell
+python semantic_eval.py --benchmark my_benchmark.csv --pooling attention
+```
+
+The `attention` method uses the final Transformer block's self-attention
+weights to weight the final contextual token states. The `bos` method is
+included as an experimental baseline; because this model uses causal
+attention, the BOS position cannot attend to later tokens.
