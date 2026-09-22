@@ -348,3 +348,39 @@ A finer search can be run with:
 ```powershell
 python semantic_hybrid_eval.py --benchmark my_benchmark.csv --alpha-step 0.05
 ```
+
+
+## Normalized hybrid semantic vector
+
+Hybrid evaluation now supports two modes:
+
+```text
+raw:
+  hybrid = alpha * attention + (1 - alpha) * last
+
+normalized:
+  a = L2Normalize(attention)
+  l = L2Normalize(last)
+  hybrid = L2Normalize(alpha * a + (1 - alpha) * l)
+```
+
+Compare both modes over the alpha sweep:
+
+```powershell
+python semantic_hybrid_eval.py --benchmark my_benchmark.csv --alpha-step 0.05
+```
+
+Run only the normalized hybrid:
+
+```powershell
+python semantic_hybrid_eval.py --benchmark my_benchmark.csv --alpha-step 0.05 --mode normalized
+```
+
+Run only the original raw hybrid:
+
+```powershell
+python semantic_hybrid_eval.py --benchmark my_benchmark.csv --alpha-step 0.05 --mode raw
+```
+
+The summary CSV now includes a `mode` column so raw and normalized hybrid
+results can be compared directly.
