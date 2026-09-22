@@ -672,3 +672,75 @@ discovery-first:
 
 If no threshold pair satisfies the requested Known Recall constraint, the
 balanced policy falls back to the threshold pair with the highest Known Recall.
+
+
+## Independent holdout validation
+
+Branch `v0.1` includes independent validation data that are not used for
+threshold selection:
+
+```text
+holdout_benchmark.csv
+unknown_holdout.csv
+```
+
+Run:
+
+```powershell
+python semantic_validation.py
+```
+
+The validation flow is:
+
+```text
+Development data
+  my_benchmark.csv
+  unknown_benchmark.csv
+        |
+        v
+select policy thresholds
+        |
+        v
+freeze thresholds
+        |
+        v
+Independent holdout data
+  holdout_benchmark.csv
+  unknown_holdout.csv
+        |
+        v
+final validation metrics
+```
+
+The holdout set is never used to optimize the similarity or margin thresholds.
+
+Reported metrics include:
+
+- Known routing accuracy before Unknown rejection
+- Known Recall after Unknown rejection
+- Known accept rate
+- Unknown detection rate
+- False Unknown rate
+- False Known rate
+- Balanced accuracy
+- per-category Known and Unknown results
+
+Per-sample results are saved to:
+
+```text
+semantic_validation_results.csv
+```
+
+Policy examples:
+
+```powershell
+python semantic_validation.py --policy known-first
+python semantic_validation.py --policy balanced
+python semantic_validation.py --policy discovery-first
+```
+
+For the constrained balanced policy:
+
+```powershell
+python semantic_validation.py --policy balanced --balanced-min-known-recall 0.70
+```
