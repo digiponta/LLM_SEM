@@ -309,3 +309,42 @@ The `attention` method uses the final Transformer block's self-attention
 weights to weight the final contextual token states. The `bos` method is
 included as an experimental baseline; because this model uses causal
 attention, the BOS position cannot attend to later tokens.
+
+
+## Hybrid semantic vector
+
+LLM_SEM now supports a hybrid representation:
+
+```text
+Hybrid = alpha * AttentionVector + (1 - alpha) * LastTokenVector
+```
+
+Use `semantic_hybrid_eval.py` to sweep alpha from 0.0 to 1.0 without
+retraining the model:
+
+```powershell
+python semantic_hybrid_eval.py --benchmark my_benchmark.csv
+```
+
+Default sweep:
+
+```text
+alpha = 0.0, 0.1, 0.2, ... 1.0
+```
+
+The script reports the within-class similarity, between-class similarity,
+semantic margin, and 1-NN accuracy for every alpha. It separately reports
+the alpha with the highest 1-NN accuracy and the alpha with the largest
+semantic margin.
+
+Results are saved to:
+
+```text
+semantic_hybrid_summary.csv
+```
+
+A finer search can be run with:
+
+```powershell
+python semantic_hybrid_eval.py --benchmark my_benchmark.csv --alpha-step 0.05
+```
