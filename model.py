@@ -186,8 +186,8 @@ class LanguageModel(nn.Module):
         self,
         token_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        pooling: str = "mean",
-        hybrid_alpha: float = 0.5,
+        pooling: str = "hybrid",
+        hybrid_alpha: float = 0.35,
         normalize_hybrid: bool = False,
     ) -> torch.Tensor:
         """Return one semantic vector per input sequence.
