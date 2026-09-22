@@ -36,10 +36,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     parser.add_argument("--benchmark", default=DEFAULT_BENCHMARK)
     parser.add_argument("--alpha", type=float, default=DEFAULT_ALPHA)
-    parser.add_argument("--hidden-dim", type=int, default=128)
-    parser.add_argument("--epochs", type=int, default=1000)
-    parser.add_argument("--lr", type=float, default=1.0e-3)
+    parser.add_argument("--hidden-dim", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--lr", type=float, default=1.0e-4)
     parser.add_argument("--temperature", type=float, default=0.10)
+    parser.add_argument("--preservation-lambda", type=float, default=1.0)
+    parser.add_argument("--patience", type=int, default=20)
+    parser.add_argument("--min-delta", type=float, default=1.0e-4)
     parser.add_argument("--weight-decay", type=float, default=1.0e-4)
     parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
@@ -107,6 +110,12 @@ def main() -> None:
         raise ValueError("temperature must be > 0.")
     if args.hidden_dim <= 0:
         raise ValueError("hidden-dim must be > 0.")
+    if args.preservation_lambda < 0.0:
+        raise ValueError("preservation-lambda must be >= 0.")
+    if args.patience <= 0:
+        raise ValueError("patience must be > 0.")
+    if args.min_delta < 0.0:
+        raise ValueError("min-delta must be >= 0.")
 
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
@@ -185,32 +194,56 @@ def main() -> None:
     print("Epochs            :", args.epochs)
     print("Learning rate     :", args.lr)
     print("Temperature       :", args.temperature)
+    print("Preservation lambda:", args.preservation_lambda)
+    print("Early-stop patience:", args.patience)
+    print("Early-stop min delta:", args.min_delta)
     print("Base LLM frozen   : True")
     print()
 
     best_loss = float("inf")
     best_state = None
+    best_epoch = 0
+    epochs_without_improvement = 0
+    normalized_base = F.normalize(base_vectors, p=2, dim=-1)
 
     for epoch in range(1, args.epochs + 1):
         head.train()
         optimizer.zero_grad(set_to_none=True)
 
         projected = head(base_vectors, normalize=True)
-        loss = supervised_contrastive_loss(
+        contrastive_loss = supervised_contrastive_loss(
             projected,
             labels,
             temperature=args.temperature,
+        )
+        preservation_loss = (
+            1.0
+            - F.cosine_similarity(
+                projected,
+                normalized_base,
+                dim=-1,
+            )
+        ).mean()
+        loss = (
+            contrastive_loss
+            + args.preservation_lambda * preservation_loss
         )
         loss.backward()
         optimizer.step()
 
         value = float(loss.item())
-        if value < best_loss:
+        contrastive_value = float(contrastive_loss.item())
+        preservation_value = float(preservation_loss.item())
+        if value < best_loss - args.min_delta:
             best_loss = value
+            best_epoch = epoch
+            epochs_without_improvement = 0
             best_state = {
                 key: tensor.detach().cpu().clone()
                 for key, tensor in head.state_dict().items()
             }
+        else:
+            epochs_without_improvement += 1
 
         if (
             epoch == 1
@@ -220,8 +253,17 @@ def main() -> None:
             print(
                 f"Epoch {epoch:>5}/{args.epochs:<5} "
                 f"loss={value:.6f} "
+                f"contrastive={contrastive_value:.6f} "
+                f"preserve={preservation_value:.6f} "
                 f"best={best_loss:.6f}"
             )
+
+        if epochs_without_improvement >= args.patience:
+            print(
+                f"Early stopping at epoch {epoch}; "
+                f"best epoch={best_epoch}"
+            )
+            break
 
     if best_state is not None:
         head.load_state_dict(best_state)
@@ -234,8 +276,12 @@ def main() -> None:
         pooling="hybrid",
         hybrid_alpha=args.alpha,
         temperature=args.temperature,
+        preservation_lambda=args.preservation_lambda,
+        patience=args.patience,
+        min_delta=args.min_delta,
         labels=label_names,
         best_loss=best_loss,
+        best_epoch=best_epoch,
         epochs=args.epochs,
         seed=args.seed,
     )
@@ -243,6 +289,7 @@ def main() -> None:
     print()
     print("Projection checkpoint saved:", args.output)
     print("Best training loss          :", f"{best_loss:.6f}")
+    print("Best epoch                  :", best_epoch)
 
 
 if __name__ == "__main__":
