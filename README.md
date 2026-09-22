@@ -631,3 +631,44 @@ python semantic_router.py --policy discovery-first
 This provides an operational prototype for switching Semantic OS behavior
 between preserving known routes and aggressively forwarding uncertain semantic
 tasks to an Unknown / Discovery VM.
+
+
+## Constrained balanced policy
+
+The `balanced` policy now requires a minimum Known Recall before maximizing
+Balanced Accuracy.
+
+Default constraint:
+
+```text
+Known Recall >= 70%
+```
+
+Run:
+
+```powershell
+python semantic_router.py --policy balanced --text "明日の東京の気温を知りたいです"
+```
+
+A custom minimum Known Recall can also be supplied:
+
+```powershell
+python semantic_router.py --policy balanced --balanced-min-known-recall 0.75 --text "明日の東京の気温を知りたいです"
+```
+
+Selection logic:
+
+```text
+known-first:
+  maximize Known Recall
+
+balanced:
+  require Known Recall >= minimum
+  then maximize Balanced Accuracy
+
+discovery-first:
+  maximize Unknown Detection Rate
+```
+
+If no threshold pair satisfies the requested Known Recall constraint, the
+balanced policy falls back to the threshold pair with the highest Known Recall.
