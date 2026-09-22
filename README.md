@@ -384,3 +384,70 @@ python semantic_hybrid_eval.py --benchmark my_benchmark.csv --alpha-step 0.05 --
 
 The summary CSV now includes a `mode` column so raw and normalized hybrid
 results can be compared directly.
+
+
+## Default semantic representation
+
+Based on the current benchmark experiments, the default semantic representation
+is now:
+
+```text
+pooling          = hybrid
+alpha            = 0.35
+normalize_hybrid = False
+```
+
+That is:
+
+```text
+SemanticVector = 0.35 * AttentionVector + 0.65 * LastTokenVector
+```
+
+This configuration produced the largest semantic margin in the current raw
+hybrid sweep while retaining high 1-NN accuracy.
+
+## Semantic routing
+
+`semantic_router.py` builds one semantic centroid per label from
+`my_benchmark.csv` and routes new text to the closest centroid using cosine
+similarity.
+
+Interactive mode:
+
+```powershell
+python semantic_router.py
+```
+
+Single-text mode:
+
+```powershell
+python semantic_router.py --text "明日の東京の気温を知りたいです"
+```
+
+The router prints the selected route and the top candidate routes with
+similarity and semantic distance.
+
+The current routing classes are derived from the benchmark labels:
+
+```text
+animal
+weather
+computer
+food
+transport
+science
+```
+
+This is a prototype of the Semantic OS routing path:
+
+```text
+Input text
+  |
+LLM_SEM semantic encoder
+  |
+64-D raw hybrid semantic vector
+  |
+cosine similarity to route centroids
+  |
+Semantic route / VM candidate
+```
