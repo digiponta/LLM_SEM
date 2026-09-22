@@ -1054,3 +1054,62 @@ python semantic_projection_sweep.py --lambdas 0.25,0.5,1.0,2.0,4.0
 The existing independent holdout sets should not be used to choose lambda.
 After development-only selection, confirm the chosen configuration with a new
 independent test set.
+
+
+## Multi-seed preservation sweep
+
+Branch `v0.1` now includes a development-only multi-seed stability test:
+
+```text
+semantic_projection_multiseed.py
+```
+
+Run:
+
+```powershell
+python semantic_projection_multiseed.py
+```
+
+Default experiment:
+
+```text
+lambda = 0.5, 1.0, 2.0, 5.0
+seed   = 1, 2, 3, 4, 5
+```
+
+For each lambda/seed pair, the script trains a fresh projection head and
+measures:
+
+- leave-one-out routing accuracy
+- semantic margin
+- geometry drift
+- best epoch
+- contrastive and preservation losses
+
+It then reports, for each lambda:
+
+- mean LOO accuracy
+- standard deviation of LOO accuracy
+- mean semantic margin
+- standard deviation of semantic margin
+- mean geometry drift
+- standard deviation of geometry drift
+
+Candidate selection is development-only and stability-aware:
+
+```text
+1. highest mean LOO accuracy
+2. lowest LOO accuracy standard deviation
+3. prefer mean geometry drift <= 0.05
+4. highest mean semantic margin
+```
+
+Outputs:
+
+```text
+semantic_projection_multiseed_detail.csv
+semantic_projection_multiseed_summary.csv
+```
+
+The script intentionally does not load any holdout benchmark. The selected
+configuration should be confirmed only with a fresh independent test set.
