@@ -188,6 +188,7 @@ class LanguageModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         pooling: str = "mean",
         hybrid_alpha: float = 0.5,
+        normalize_hybrid: bool = False,
     ) -> torch.Tensor:
         """Return one semantic vector per input sequence.
 
@@ -198,6 +199,7 @@ class LanguageModel(nn.Module):
             max       - element-wise maximum over token states
             attention - final-block attention-weighted token states
             hybrid    - alpha * attention + (1-alpha) * last
+                         optionally L2-normalize both inputs and output
 
         Shape:
             token_ids      : [batch, time]
@@ -273,10 +275,31 @@ class LanguageModel(nn.Module):
                 )
                 last_vector = hidden[batch_indices, indices, :]
 
-            return (
+            if normalize_hybrid:
+                attention_vector = F.normalize(
+                    attention_vector,
+                    p=2,
+                    dim=-1,
+                )
+                last_vector = F.normalize(
+                    last_vector,
+                    p=2,
+                    dim=-1,
+                )
+
+            hybrid_vector = (
                 hybrid_alpha * attention_vector
                 + (1.0 - hybrid_alpha) * last_vector
             )
+
+            if normalize_hybrid:
+                hybrid_vector = F.normalize(
+                    hybrid_vector,
+                    p=2,
+                    dim=-1,
+                )
+
+            return hybrid_vector
 
         hidden = self.encode_hidden(token_ids)
 
