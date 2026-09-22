@@ -35,6 +35,7 @@ DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_BENCHMARK = "my_benchmark.csv"
 DEFAULT_UNKNOWN_BENCHMARK = "unknown_benchmark.csv"
 DEFAULT_ALPHA = 0.35
+DEFAULT_BALANCED_MIN_KNOWN_RECALL = 0.70
 
 
 @dataclass
@@ -136,6 +137,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sweep-csv",
         default="semantic_unknown_threshold_sweep.csv",
+    )
+    parser.add_argument(
+        "--balanced-min-known-recall",
+        type=float,
+        default=DEFAULT_BALANCED_MIN_KNOWN_RECALL,
+        help=(
+            "Minimum Known Recall required by the balanced policy "
+            "(default: 0.70)."
+        ),
     )
     parser.add_argument("--top-k", type=int, default=3)
     return parser.parse_args()
@@ -572,6 +582,7 @@ def build_threshold_rows(
 def select_policy_threshold(
     rows: Sequence[Dict[str, float]],
     policy: str,
+    balanced_min_known_recall: float = DEFAULT_BALANCED_MIN_KNOWN_RECALL,
 ) -> Dict[str, float]:
     if not rows:
         raise ValueError("No threshold rows are available.")
@@ -584,10 +595,31 @@ def select_policy_threshold(
             -row["false_unknown_rate"],
         )
     elif policy == "balanced":
-        key = lambda row: (
-            row["balanced_accuracy"],
-            row["unknown_detection_rate"],
-            row["known_recall"],
+        eligible = [
+            row
+            for row in rows
+            if row["known_recall"] >= balanced_min_known_recall
+        ]
+        if eligible:
+            return max(
+                eligible,
+                key=lambda row: (
+                    row["balanced_accuracy"],
+                    row["unknown_detection_rate"],
+                    row["known_recall"],
+                    -row["false_unknown_rate"],
+                ),
+            )
+
+        # Fallback for very small or difficult benchmarks where the
+        # requested Known Recall constraint cannot be satisfied.
+        return max(
+            rows,
+            key=lambda row: (
+                row["known_recall"],
+                row["balanced_accuracy"],
+                row["unknown_detection_rate"],
+            ),
         )
     elif policy == "discovery-first":
         key = lambda row: (
@@ -607,20 +639,31 @@ def get_policy_thresholds(
     known_samples: Sequence[LabeledSentence],
     unknown_samples: Sequence[LabeledSentence],
     policy: str,
+    balanced_min_known_recall: float = DEFAULT_BALANCED_MIN_KNOWN_RECALL,
 ) -> Dict[str, float]:
     known_scores = collect_known_loo_scores(router, known_samples)
     unknown_scores = collect_unknown_scores(
         router, known_samples, unknown_samples
     )
     rows = build_threshold_rows(known_scores, unknown_scores)
-    return select_policy_threshold(rows, policy)
+    return select_policy_threshold(
+        rows,
+        policy,
+        balanced_min_known_recall=balanced_min_known_recall,
+    )
 
 
 def print_policy_summary(
     policy: str,
     metrics: Dict[str, float],
+    balanced_min_known_recall: float = DEFAULT_BALANCED_MIN_KNOWN_RECALL,
 ) -> None:
     print("Policy             :", policy)
+    if policy == "balanced":
+        print(
+            "Min Known recall    :",
+            f"{balanced_min_known_recall * 100:.2f}%",
+        )
     print(
         "Similarity threshold:",
         f"{metrics['similarity_threshold']:.6f}",
@@ -743,6 +786,10 @@ def main() -> None:
 
     if not 0.0 <= args.alpha <= 1.0:
         raise ValueError("alpha must be between 0.0 and 1.0.")
+    if not 0.0 <= args.balanced_min_known_recall <= 1.0:
+        raise ValueError(
+            "balanced-min-known-recall must be between 0.0 and 1.0."
+        )
 
     device = torch.device(
         "cuda" if torch.cuda.is_available() else "cpu"
@@ -806,8 +853,13 @@ def main() -> None:
             samples,
             unknown_samples,
             args.policy,
+            balanced_min_known_recall=args.balanced_min_known_recall,
         )
-        print_policy_summary(args.policy, policy_metrics)
+        print_policy_summary(
+            args.policy,
+            policy_metrics,
+            balanced_min_known_recall=args.balanced_min_known_recall,
+        )
 
     router.fit(samples)
     labels = sorted(router.centroids.keys())
