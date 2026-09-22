@@ -209,3 +209,55 @@ compares them using cosine similarity and semantic distance.
 This is the first implementation stage. Meaning, intent, purpose, metadata,
 and learned semantic routing are not yet explicitly inferred; the current
 SemanticData vector is derived from the Transformer's contextual hidden state.
+
+
+## Semantic performance evaluation
+
+`semantic_eval.py` evaluates whether the existing trained checkpoint already
+contains useful semantic structure. The evaluation does not retrain the model.
+
+The built-in benchmark contains Japanese sentences from several semantic
+classes such as animals, weather, computers, food, and transportation.
+
+Run:
+
+```powershell
+python semantic_eval.py
+```
+
+The experiment measures:
+
+- mean cosine similarity for sentence pairs in the same semantic class
+- mean cosine similarity for sentence pairs in different semantic classes
+- semantic margin = within-class mean - between-class mean
+- leave-one-out 1-nearest-neighbor label accuracy
+- pairwise cosine distance
+
+Pairwise results are also written to:
+
+```text
+semantic_eval_results.csv
+```
+
+A positive semantic margin means that, on average, sentences in the same
+semantic group are closer than sentences in different groups.
+
+A custom benchmark can be supplied as JSON:
+
+```powershell
+python semantic_eval.py --benchmark-json my_benchmark.json
+```
+
+JSON format:
+
+```json
+[
+  {"label": "animal", "text": "猫は動物です。"},
+  {"label": "animal", "text": "犬は動物です。"},
+  {"label": "weather", "text": "今日は雨です。"}
+]
+```
+
+The purpose of this experiment is to determine how much semantic information
+can be extracted from the existing next-token language model before adding
+semantic-specific training objectives.
