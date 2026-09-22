@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-DEFAULT_PROJECTION = "model/semantic-projection-v0.1.pt"
+DEFAULT_PROJECTION = "model/semantic-projection-v0.2.pt"
 
 
 class SemanticProjectionHead(nn.Module):
