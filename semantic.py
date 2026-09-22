@@ -23,7 +23,7 @@ class SemanticData:
     dimension: int
     token_count: int
     model_type: str = "transformer-hidden"
-    pooling: str = "mean"
+    pooling: str = "hybrid"
     hybrid_alpha: Optional[float] = None
     normalized: bool = False
     confidence: Optional[float] = None
@@ -34,8 +34,8 @@ def encode_text(
     model: LanguageModel,
     tokenizer: Tokenizer,
     text: str,
-    pooling: str = "mean",
-    hybrid_alpha: float = 0.5,
+    pooling: str = "hybrid",
+    hybrid_alpha: float = 0.35,
     normalize_hybrid: bool = False,
 ) -> SemanticData:
     """Convert text into one contextual semantic vector."""
