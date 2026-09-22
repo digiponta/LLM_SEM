@@ -451,3 +451,33 @@ cosine similarity to route centroids
   |
 Semantic route / VM candidate
 ```
+
+
+## Leave-one-out routing evaluation
+
+The semantic router can evaluate all benchmark samples with leave-one-out
+centroid routing:
+
+```powershell
+python semantic_router.py --evaluate
+```
+
+This reports:
+
+- overall routing accuracy
+- per-category accuracy
+- confusion matrix
+- mean Top-1 similarity
+- mean Top-1 / Top-2 margin
+- candidate thresholds for an Unknown route
+
+The candidate Unknown thresholds are estimated from the lower 10% region of
+correctly routed samples. A sample can be treated as Unknown when either its
+Top-1 similarity or its Top-1 / Top-2 margin falls below the corresponding
+threshold.
+
+Per-sample evaluation results are saved to:
+
+```text
+semantic_router_eval.csv
+```
