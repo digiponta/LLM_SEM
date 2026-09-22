@@ -37,6 +37,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--alpha-stop", type=float, default=1.0)
     parser.add_argument("--alpha-step", type=float, default=0.1)
     parser.add_argument(
+        "--mode",
+        choices=("raw", "normalized", "both"),
+        default="both",
+        help="Compare raw hybrid, normalized hybrid, or both.",
+    )
+    parser.add_argument(
         "--summary-csv",
         default="semantic_hybrid_summary.csv",
     )
@@ -62,6 +68,7 @@ def encode_benchmark(
     tokenizer: Tokenizer,
     benchmark: Sequence[LabeledSentence],
     alpha: float,
+    normalized: bool,
 ) -> List[SemanticData]:
     vectors: List[SemanticData] = []
     for index, sample in enumerate(benchmark, start=1):
@@ -72,10 +79,11 @@ def encode_benchmark(
                 sample.text,
                 pooling="hybrid",
                 hybrid_alpha=alpha,
+                normalize_hybrid=normalized,
             )
         )
         print(
-            f"\r[alpha={alpha:0.2f}] Encoding "
+            f"\r[{'norm' if normalized else 'raw ':<4} alpha={alpha:0.2f}] Encoding "
             f"{index}/{len(benchmark)} | {sample.label:<10}",
             end="",
             flush=True,
@@ -88,7 +96,8 @@ def evaluate(
     benchmark: Sequence[LabeledSentence],
     vectors: Sequence[SemanticData],
     alpha: float,
-) -> Dict[str, float]:
+    normalized: bool,
+) -> Dict[str, object]:
     within: List[float] = []
     between: List[float] = []
 
@@ -119,6 +128,7 @@ def evaluate(
     between_mean = mean(between)
 
     return {
+        "mode": "normalized" if normalized else "raw",
         "alpha": alpha,
         "within_similarity": within_mean,
         "between_similarity": between_mean,
@@ -127,7 +137,7 @@ def evaluate(
     }
 
 
-def write_csv(filename: str, rows: Sequence[Dict[str, float]]) -> None:
+def write_csv(filename: str, rows: Sequence[Dict[str, object]]) -> None:
     path = Path(filename)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -137,7 +147,7 @@ def write_csv(filename: str, rows: Sequence[Dict[str, float]]) -> None:
         writer.writerows(rows)
 
 
-def print_results(rows: Sequence[Dict[str, float]]) -> None:
+def print_results(rows: Sequence[Dict[str, object]]) -> None:
     print()
     print("==============================================================")
     print(" Hybrid Semantic Alpha Sweep")
@@ -145,47 +155,48 @@ def print_results(rows: Sequence[Dict[str, float]]) -> None:
     print("==============================================================")
     print()
     print(
-        f"{'Alpha':>7} {'Within':>10} {'Between':>10} "
+        f"{'Mode':<11} {'Alpha':>7} {'Within':>10} {'Between':>10} "
         f"{'Margin':>10} {'1-NN':>10}"
     )
-    print("-" * 54)
+    print("-" * 66)
 
     for row in rows:
         print(
-            f"{row['alpha']:>7.2f} "
-            f"{row['within_similarity']:>10.6f} "
-            f"{row['between_similarity']:>10.6f} "
-            f"{row['semantic_margin']:>10.6f} "
-            f"{row['nn_accuracy'] * 100.0:>9.2f}%"
+            f"{str(row['mode']):<11} "
+            f"{float(row['alpha']):>7.2f} "
+            f"{float(row['within_similarity']):>10.6f} "
+            f"{float(row['between_similarity']):>10.6f} "
+            f"{float(row['semantic_margin']):>10.6f} "
+            f"{float(row['nn_accuracy']) * 100.0:>9.2f}%"
         )
 
     best_accuracy = max(
         rows,
         key=lambda row: (
-            row["nn_accuracy"],
-            row["semantic_margin"],
+            float(row["nn_accuracy"]),
+            float(row["semantic_margin"]),
         ),
     )
     best_margin = max(
         rows,
         key=lambda row: (
-            row["semantic_margin"],
-            row["nn_accuracy"],
+            float(row["semantic_margin"]),
+            float(row["nn_accuracy"]),
         ),
     )
 
     print()
     print(
         "Best 1-NN alpha :",
-        f"{best_accuracy['alpha']:.2f}",
-        f"accuracy={best_accuracy['nn_accuracy'] * 100.0:.2f}%",
-        f"margin={best_accuracy['semantic_margin']:.6f}",
+        f"{best_accuracy['mode']} alpha={float(best_accuracy['alpha']):.2f}",
+        f"accuracy={float(best_accuracy['nn_accuracy']) * 100.0:.2f}%",
+        f"margin={float(best_accuracy['semantic_margin']):.6f}",
     )
     print(
         "Best margin alpha:",
-        f"{best_margin['alpha']:.2f}",
-        f"margin={best_margin['semantic_margin']:.6f}",
-        f"accuracy={best_margin['nn_accuracy'] * 100.0:.2f}%",
+        f"{best_margin['mode']} alpha={float(best_margin['alpha']):.2f}",
+        f"margin={float(best_margin['semantic_margin']):.6f}",
+        f"accuracy={float(best_margin['nn_accuracy']) * 100.0:.2f}%",
     )
 
 
@@ -218,6 +229,7 @@ def main() -> None:
     print("Tokenizer :", args.tokenizer)
     print("Benchmark :", args.benchmark)
     print("Samples   :", len(benchmark))
+    print("Mode      :", args.mode)
     print(
         "Alpha     :",
         f"{args.alpha_start:.2f} .. {args.alpha_stop:.2f}",
@@ -241,22 +253,31 @@ def main() -> None:
     print("Vector dimension:", model.d_model)
     print()
 
-    rows: List[Dict[str, float]] = []
+    rows: List[Dict[str, object]] = []
 
-    for alpha in alphas:
-        vectors = encode_benchmark(
-            model,
-            tokenizer,
-            benchmark,
-            alpha,
-        )
-        rows.append(
-            evaluate(
+    modes = (
+        (False, True)
+        if args.mode == "both"
+        else ((args.mode == "normalized"),)
+    )
+
+    for normalized in modes:
+        for alpha in alphas:
+            vectors = encode_benchmark(
+                model,
+                tokenizer,
                 benchmark,
-                vectors,
                 alpha,
+                normalized,
             )
-        )
+            rows.append(
+                evaluate(
+                    benchmark,
+                    vectors,
+                    alpha,
+                    normalized,
+                )
+            )
 
     print_results(rows)
     write_csv(args.summary_csv, rows)
