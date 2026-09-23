@@ -249,6 +249,95 @@ def holdout_metrics(
     }
 
 
+
+def grouped_known_metrics(
+    development_samples: Sequence[LabeledSentence],
+    development_vectors: Sequence[torch.Tensor],
+    known_samples: Sequence[LabeledSentence],
+    known_vectors: Sequence[torch.Tensor],
+    quantile: float,
+    scale: float,
+    attribute: str,
+) -> Dict[str, Dict[str, float]]:
+    centers = centroids(development_samples, development_vectors)
+    radii = class_radii(
+        development_samples,
+        development_vectors,
+        quantile,
+        scale,
+    )
+
+    grouped: Dict[str, Dict[str, float]] = defaultdict(
+        lambda: {
+            "total": 0.0,
+            "correct": 0.0,
+            "accepted": 0.0,
+            "routed_correct": 0.0,
+        }
+    )
+
+    for sample, vector in zip(known_samples, known_vectors):
+        group = str(getattr(sample, attribute, "") or "").strip()
+        if not group:
+            continue
+
+        label, distance = nearest(vector, centers)
+        correct = label == sample.label
+        accepted = distance <= radii[label]
+
+        grouped[group]["total"] += 1.0
+        grouped[group]["correct"] += float(correct)
+        grouped[group]["accepted"] += float(accepted)
+        grouped[group]["routed_correct"] += float(correct and accepted)
+
+    result: Dict[str, Dict[str, float]] = {}
+    for group, values in grouped.items():
+        total = values["total"]
+        result[group] = {
+            "samples": total,
+            "accuracy": values["correct"] / total,
+            "accept_rate": values["accepted"] / total,
+            "recall": values["routed_correct"] / total,
+        }
+    return result
+
+
+def print_grouped_known_report(
+    title: str,
+    before: Dict[str, Dict[str, float]],
+    after: Dict[str, Dict[str, float]],
+) -> None:
+    groups = sorted(set(before) | set(after))
+    if not groups:
+        return
+
+    print(title)
+    print("=" * len(title))
+    print()
+    print(
+        f"{'Group':<18} {'N':>4} "
+        f"{'Acc B':>8} {'Acc A':>8} "
+        f"{'Accept B':>9} {'Accept A':>9} "
+        f"{'Recall B':>9} {'Recall A':>9}"
+    )
+    print("-" * 83)
+
+    for group in groups:
+        b = before.get(group)
+        a = after.get(group)
+        n = int((a or b or {}).get("samples", 0.0))
+        print(
+            f"{group:<18} {n:>4d} "
+            f"{(b or {}).get('accuracy', 0.0) * 100:>7.2f}% "
+            f"{(a or {}).get('accuracy', 0.0) * 100:>7.2f}% "
+            f"{(b or {}).get('accept_rate', 0.0) * 100:>8.2f}% "
+            f"{(a or {}).get('accept_rate', 0.0) * 100:>8.2f}% "
+            f"{(b or {}).get('recall', 0.0) * 100:>8.2f}% "
+            f"{(a or {}).get('recall', 0.0) * 100:>8.2f}%"
+        )
+    print()
+
+
 def project_all(
     head: SemanticProjectionHead,
     vectors: Sequence[torch.Tensor],
@@ -445,6 +534,54 @@ def main() -> None:
     print_holdout_report(
         "After projection",
         projected_holdout,
+    )
+
+    pattern_before = grouped_known_metrics(
+        development,
+        development_raw,
+        known_holdout,
+        known_raw,
+        args.radius_quantile,
+        args.radius_scale,
+        "pattern",
+    )
+    pattern_after = grouped_known_metrics(
+        development,
+        development_projected,
+        known_holdout,
+        known_projected,
+        args.radius_quantile,
+        args.radius_scale,
+        "pattern",
+    )
+    print_grouped_known_report(
+        "Known holdout by utterance pattern",
+        pattern_before,
+        pattern_after,
+    )
+
+    difficulty_before = grouped_known_metrics(
+        development,
+        development_raw,
+        known_holdout,
+        known_raw,
+        args.radius_quantile,
+        args.radius_scale,
+        "difficulty",
+    )
+    difficulty_after = grouped_known_metrics(
+        development,
+        development_projected,
+        known_holdout,
+        known_projected,
+        args.radius_quantile,
+        args.radius_scale,
+        "difficulty",
+    )
+    print_grouped_known_report(
+        "Known holdout by difficulty",
+        difficulty_before,
+        difficulty_after,
     )
 
 
