@@ -41,6 +41,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=1.0e-4)
     parser.add_argument("--temperature", type=float, default=0.10)
     parser.add_argument("--preservation-lambda", type=float, default=1.0)
+    parser.add_argument("--separation-lambda", type=float, default=1.0)
+    parser.add_argument("--separation-margin", type=float, default=0.05)
     parser.add_argument("--patience", type=int, default=20)
     parser.add_argument("--min-delta", type=float, default=1.0e-4)
     parser.add_argument("--weight-decay", type=float, default=1.0e-4)
@@ -91,6 +93,37 @@ def supervised_contrastive_loss(
     return -positive_log_prob.mean()
 
 
+
+def inter_class_separation_loss(
+    embeddings: torch.Tensor,
+    labels: torch.Tensor,
+    margin: float,
+) -> torch.Tensor:
+    if margin < 0.0:
+        raise ValueError("separation margin must be >= 0.")
+
+    unique_labels = torch.unique(labels)
+    if unique_labels.numel() < 2:
+        return embeddings.new_tensor(0.0)
+
+    centers = []
+    for label in unique_labels:
+        mask = labels == label
+        center = embeddings[mask].mean(dim=0)
+        centers.append(F.normalize(center, p=2, dim=0))
+
+    centers = torch.stack(centers)
+    similarity = torch.matmul(centers, centers.T)
+    distance = 1.0 - similarity
+
+    k = centers.size(0)
+    eye = torch.eye(k, dtype=torch.bool, device=centers.device)
+    pair_distances = distance[~eye]
+
+    penalties = F.relu(margin - pair_distances)
+    return penalties.mean()
+
+
 def main() -> None:
     args = parse_args()
 
@@ -112,6 +145,10 @@ def main() -> None:
         raise ValueError("hidden-dim must be > 0.")
     if args.preservation_lambda < 0.0:
         raise ValueError("preservation-lambda must be >= 0.")
+    if args.separation_lambda < 0.0:
+        raise ValueError("separation-lambda must be >= 0.")
+    if args.separation_margin < 0.0:
+        raise ValueError("separation-margin must be >= 0.")
     if args.patience <= 0:
         raise ValueError("patience must be > 0.")
     if args.min_delta < 0.0:
@@ -217,6 +254,8 @@ def main() -> None:
     print("Learning rate     :", args.lr)
     print("Temperature       :", args.temperature)
     print("Preservation lambda:", args.preservation_lambda)
+    print("Separation lambda  :", args.separation_lambda)
+    print("Separation margin  :", args.separation_margin)
     print("Early-stop patience:", args.patience)
     print("Early-stop min delta:", args.min_delta)
     print("Base LLM frozen   : True")
@@ -246,9 +285,15 @@ def main() -> None:
                 dim=-1,
             )
         ).mean()
+        separation_loss = inter_class_separation_loss(
+            projected,
+            labels,
+            margin=args.separation_margin,
+        )
         loss = (
             contrastive_loss
             + args.preservation_lambda * preservation_loss
+            + args.separation_lambda * separation_loss
         )
         loss.backward()
         optimizer.step()
@@ -256,6 +301,7 @@ def main() -> None:
         value = float(loss.item())
         contrastive_value = float(contrastive_loss.item())
         preservation_value = float(preservation_loss.item())
+        separation_value = float(separation_loss.item())
         if value < best_loss - args.min_delta:
             best_loss = value
             best_epoch = epoch
@@ -277,6 +323,7 @@ def main() -> None:
                 f"loss={value:.6f} "
                 f"contrastive={contrastive_value:.6f} "
                 f"preserve={preservation_value:.6f} "
+                f"separate={separation_value:.6f} "
                 f"best={best_loss:.6f}"
             )
 
@@ -299,6 +346,8 @@ def main() -> None:
         hybrid_alpha=args.alpha,
         temperature=args.temperature,
         preservation_lambda=args.preservation_lambda,
+        separation_lambda=args.separation_lambda,
+        separation_margin=args.separation_margin,
         patience=args.patience,
         min_delta=args.min_delta,
         labels=label_names,
