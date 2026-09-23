@@ -141,6 +141,12 @@ def main() -> None:
     }
 
     counts = Counter(sample.label for sample in samples)
+    pattern_counts = Counter(
+        sample.pattern for sample in samples if sample.pattern
+    )
+    difficulty_counts = Counter(
+        sample.difficulty for sample in samples if sample.difficulty
+    )
     for label, count in counts.items():
         if count < 2:
             raise ValueError(
@@ -188,6 +194,22 @@ def main() -> None:
     print("Benchmark         :", args.benchmark)
     print("Samples           :", len(samples))
     print("Classes           :", len(label_names))
+    if pattern_counts:
+        print(
+            "Patterns          :",
+            ", ".join(
+                f"{name}={pattern_counts[name]}"
+                for name in sorted(pattern_counts)
+            ),
+        )
+    if difficulty_counts:
+        print(
+            "Difficulty        :",
+            ", ".join(
+                f"{name}={difficulty_counts[name]}"
+                for name in sorted(difficulty_counts)
+            ),
+        )
     print("Input dimension   :", base_vectors.size(1))
     print("Projection hidden :", args.hidden_dim)
     print("Output dimension  :", base_vectors.size(1))
