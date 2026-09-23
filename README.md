@@ -1470,3 +1470,74 @@ class-specific topics and sentence templates. They are intended to reduce the
 very small training-sample problem and support regression experiments. The
 generated validation/test splits are not a substitute for the existing
 separately authored independent holdout datasets.
+
+
+## Semantic Dataset v2
+
+LLM_SEM v0.2 includes a Japanese Semantic Dataset v2 generator with more
+diverse surface forms for the existing six semantic classes:
+
+```text
+animal
+computer
+food
+science
+transport
+weather
+```
+
+The generator mixes ten utterance styles:
+
+```text
+direct
+question
+command
+conversational
+polite
+casual
+short
+indirect
+contextual
+implicit
+```
+
+Generate the dataset with:
+
+```powershell
+python semantic_dataset_v2_generator.py
+```
+
+Default output:
+
+```text
+data_semantic/semantic_v2_all_300.csv
+data_semantic/semantic_v2_train_180.csv
+data_semantic/semantic_v2_validation_60.csv
+data_semantic/semantic_v2_test_60.csv
+```
+
+Each CSV contains:
+
+```text
+label,text,pattern,difficulty
+```
+
+The additional `pattern` and `difficulty` columns are optional metadata.
+Existing semantic training and evaluation code remains compatible because
+`label` and `text` are still the required columns.
+
+Projection training example:
+
+```powershell
+python semantic_projection_train.py --benchmark data_semantic/semantic_v2_train_180.csv --output model/semantic-projection-v2.pt
+```
+
+Projection evaluation example:
+
+```powershell
+python semantic_projection_eval.py --benchmark data_semantic/semantic_v2_train_180.csv --projection model/semantic-projection-v2.pt
+```
+
+Semantic Dataset v2 is intended to test whether the semantic space groups
+different Japanese phrasings by meaning rather than relying mainly on obvious
+category keywords.
