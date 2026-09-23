@@ -1541,3 +1541,58 @@ python semantic_projection_eval.py --benchmark data_semantic/semantic_v2_train_1
 Semantic Dataset v2 is intended to test whether the semantic space groups
 different Japanese phrasings by meaning rather than relying mainly on obvious
 category keywords.
+
+
+### Semantic Dataset v2: 600-sample mode
+
+The generator now supports a larger balanced mode:
+
+```powershell
+python semantic_dataset_v2_generator.py --samples-per-class 100
+```
+
+This creates:
+
+```text
+data_semantic/semantic_v2_all_600.csv
+data_semantic/semantic_v2_train_360.csv
+data_semantic/semantic_v2_validation_120.csv
+data_semantic/semantic_v2_test_120.csv
+```
+
+Each semantic class contains 100 samples. Each of the ten utterance patterns
+contains 10 samples per class before splitting. Every train/validation/test
+split contains every pattern for every class.
+
+The original 300-sample mode remains available:
+
+```powershell
+python semantic_dataset_v2_generator.py --samples-per-class 50
+```
+
+### Inter-class separation loss
+
+Semantic projection training now supports an explicit centroid separation term:
+
+```text
+L = L_contrastive
+  + preservation_lambda * L_preservation
+  + separation_lambda * L_separation
+```
+
+Default values:
+
+```text
+separation_lambda = 1.0
+separation_margin = 0.05
+```
+
+Example:
+
+```powershell
+python semantic_projection_train.py --benchmark data_semantic/semantic_v2_train_360.csv --separation-lambda 1.0 --separation-margin 0.05 --output model/semantic-projection-v2-600.pt
+```
+
+The separation term penalizes class-centroid cosine distances that fall below
+the requested margin. This is intended to reduce the failure mode where
+within-class and between-class similarities both rise during projection.
