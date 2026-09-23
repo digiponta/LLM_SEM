@@ -2,18 +2,16 @@
 #
 # Generate Semantic Dataset v2 for LLM_SEM v0.2.
 #
-# Goals:
-#   - preserve the existing six semantic classes
-#   - increase Japanese utterance diversity
-#   - include direct, indirect, conversational, short and implicit expressions
-#   - keep label,text compatibility with existing LLM_SEM tools
-#   - add pattern,difficulty metadata for analysis
+# Supported sizes:
+#   50 samples/class  -> 300 total  -> 180/60/60
+#   100 samples/class -> 600 total  -> 360/120/120
 #
-# Output:
-#   data_semantic/semantic_v2_all_300.csv
-#   data_semantic/semantic_v2_train_180.csv
-#   data_semantic/semantic_v2_validation_60.csv
-#   data_semantic/semantic_v2_test_60.csv
+# Each class uses ten utterance patterns:
+#   direct, question, command, conversational, polite,
+#   casual, short, indirect, contextual, implicit
+#
+# The CSV keeps label,text compatibility and adds:
+#   pattern,difficulty
 
 from __future__ import annotations
 
@@ -28,7 +26,7 @@ from typing import Dict, List, Sequence, Tuple
 
 DEFAULT_OUTPUT_DIR = "data_semantic"
 DEFAULT_SEED = 42
-DEFAULT_SAMPLES_PER_CLASS = 50
+DEFAULT_SAMPLES_PER_CLASS = 100
 
 LABELS = (
     "animal",
@@ -73,6 +71,11 @@ IMPLICIT_INTENTS: Dict[str, Sequence[str]] = {
         "何を食べて生活する",
         "どんな行動をすることが多い",
         "野生ではどんな特徴がある",
+        "群れで生活することが多い",
+        "夜に活動することが多い",
+        "どれくらい長く生きる",
+        "子どもはどのように育つ",
+        "人に慣れやすい",
     ),
     "computer": (
         "処理をもっと速くしたい",
@@ -80,6 +83,11 @@ IMPLICIT_INTENTS: Dict[str, Sequence[str]] = {
         "このエラーの原因を知りたい",
         "複数の計算機で処理を分けたい",
         "データを安全に保存したい",
+        "計算を並列化したい",
+        "通信の遅延を減らしたい",
+        "プログラムを自動化したい",
+        "大量のデータを検索したい",
+        "障害時にも処理を続けたい",
     ),
     "food": (
         "今日の夕食を何にするか迷っている",
@@ -87,6 +95,11 @@ IMPLICIT_INTENTS: Dict[str, Sequence[str]] = {
         "材料の組み合わせを考えたい",
         "どんな味になるのか知りたい",
         "栄養のある食べ方を考えたい",
+        "温かいものを食べたい",
+        "短時間で用意できるものがいい",
+        "朝に食べやすいものを探している",
+        "野菜を多く取れるものがいい",
+        "家にある材料で作りたい",
     ),
     "science": (
         "なぜ物体が落ちるのか知りたい",
@@ -94,6 +107,11 @@ IMPLICIT_INTENTS: Dict[str, Sequence[str]] = {
         "物質が変化する理由を知りたい",
         "小さな粒子の振る舞いを理解したい",
         "生命の仕組みを科学的に考えたい",
+        "熱がどのように移動するか知りたい",
+        "電気が流れる仕組みを理解したい",
+        "宇宙の天体が動く理由を知りたい",
+        "遺伝情報が伝わる仕組みを知りたい",
+        "化学反応が起こる条件を知りたい",
     ),
     "transport": (
         "そこまでどうやって行けばいい",
@@ -101,6 +119,11 @@ IMPLICIT_INTENTS: Dict[str, Sequence[str]] = {
         "乗り換えを少なくしたい",
         "荷物が多いけれど移動したい",
         "朝早く出発する方法を知りたい",
+        "渋滞を避けて移動したい",
+        "料金を抑えて移動したい",
+        "駅から目的地まで行きたい",
+        "遠くまで安全に移動したい",
+        "夜でも使える移動手段を知りたい",
     ),
     "weather": (
         "傘を持って行ったほうがいい",
@@ -108,6 +131,11 @@ IMPLICIT_INTENTS: Dict[str, Sequence[str]] = {
         "洗濯物を外に干して大丈夫",
         "今日は外で活動できそう",
         "窓を開けたままで大丈夫",
+        "風が強くなりそう",
+        "夜は冷え込みそう",
+        "明日は暑くなりそう",
+        "雷に注意したほうがいい",
+        "週末に外出できそう",
     ),
 }
 
@@ -145,39 +173,42 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--samples-per-class",
         type=int,
+        choices=(50, 100),
         default=DEFAULT_SAMPLES_PER_CLASS,
-        help="Currently fixed to 50 to preserve 180/60/60 split compatibility.",
+        help="50 -> 300 total, 100 -> 600 total (default: 100).",
     )
     return parser.parse_args()
 
 
-def _take_five(values: Sequence[str], offset: int) -> List[str]:
-    if len(values) < 5:
-        raise ValueError("At least five source phrases are required.")
-    result = []
-    for i in range(5):
-        result.append(values[(offset + i) % len(values)])
-    return result
-
-
-def generate_samples(samples_per_class: int = 50) -> List[SemanticSample]:
-    if samples_per_class != 50:
+def _select(values: Sequence[str], count: int, offset: int) -> List[str]:
+    if len(values) < count:
         raise ValueError(
-            "Semantic Dataset v2 currently requires --samples-per-class 50 "
-            "to preserve the 300/180/60/60 dataset layout."
+            f"Need at least {count} source phrases, got {len(values)}."
         )
+    ordered = list(values)
+    if count == len(ordered):
+        return ordered[offset:] + ordered[:offset]
+    return [
+        ordered[(offset + i) % len(ordered)]
+        for i in range(count)
+    ]
 
+
+def generate_samples(samples_per_class: int) -> List[SemanticSample]:
+    if samples_per_class not in (50, 100):
+        raise ValueError("samples-per-class must be 50 or 100.")
+
+    per_pattern = samples_per_class // 10
     rows: List[SemanticSample] = []
 
     for label in LABELS:
         topics = TOPICS[label]
         intents = IMPLICIT_INTENTS[label]
 
-        # 7 explicit pattern families x 5 utterances = 35 samples.
         for pattern_index, (pattern, difficulty, template) in enumerate(
             EXPLICIT_PATTERNS
         ):
-            for topic in _take_five(topics, pattern_index):
+            for topic in _select(topics, per_pattern, pattern_index):
                 rows.append(
                     SemanticSample(
                         label=label,
@@ -187,11 +218,10 @@ def generate_samples(samples_per_class: int = 50) -> List[SemanticSample]:
                     )
                 )
 
-        # 3 semantic/implicit pattern families x 5 utterances = 15 samples.
         for pattern_index, (pattern, difficulty, template) in enumerate(
             IMPLICIT_PATTERNS
         ):
-            for intent in _take_five(intents, pattern_index):
+            for intent in _select(intents, per_pattern, pattern_index):
                 rows.append(
                     SemanticSample(
                         label=label,
@@ -202,10 +232,10 @@ def generate_samples(samples_per_class: int = 50) -> List[SemanticSample]:
                 )
 
     texts = [row.text for row in rows]
-    if len(texts) != len(set(texts)):
-        duplicates = [
-            text for text, count in Counter(texts).items() if count > 1
-        ]
+    duplicates = [
+        text for text, count in Counter(texts).items() if count > 1
+    ]
+    if duplicates:
         raise ValueError(
             "Duplicate generated text detected: " + repr(duplicates[:5])
         )
@@ -222,6 +252,7 @@ def generate_samples(samples_per_class: int = 50) -> List[SemanticSample]:
 
 def stratified_pattern_split(
     rows: Sequence[SemanticSample],
+    samples_per_class: int,
     seed: int,
 ) -> Tuple[
     List[SemanticSample],
@@ -232,13 +263,18 @@ def stratified_pattern_split(
     for row in rows:
         grouped[row.label].append(row)
 
+    if samples_per_class == 50:
+        train_per_class, validation_per_class, test_per_class = 30, 10, 10
+    elif samples_per_class == 100:
+        train_per_class, validation_per_class, test_per_class = 60, 20, 20
+    else:
+        raise ValueError("samples-per-class must be 50 or 100.")
+
     rng = random.Random(seed)
     train: List[SemanticSample] = []
     validation: List[SemanticSample] = []
     test: List[SemanticSample] = []
 
-    # Split within each label while mixing pattern families.
-    # 30 / 10 / 10 per class -> 180 / 60 / 60 overall.
     for label in LABELS:
         by_pattern: Dict[str, List[SemanticSample]] = defaultdict(list)
         for row in grouped[label]:
@@ -248,23 +284,29 @@ def stratified_pattern_split(
         validation_label: List[SemanticSample] = []
         test_label: List[SemanticSample] = []
 
-        # Round-robin from shuffled pattern buckets prevents one split from
-        # accidentally containing only a narrow expression style.
-        buckets = []
+        # Split each pattern independently so every split contains every
+        # utterance pattern for every semantic class.
         for pattern in sorted(by_pattern):
             bucket = list(by_pattern[pattern])
             rng.shuffle(bucket)
-            buckets.append(bucket)
 
-        merged: List[SemanticSample] = []
-        while any(buckets):
-            for bucket in buckets:
-                if bucket:
-                    merged.append(bucket.pop())
+            if samples_per_class == 50:
+                train_n, validation_n = 3, 1
+            else:
+                train_n, validation_n = 6, 2
 
-        train_label.extend(merged[:30])
-        validation_label.extend(merged[30:40])
-        test_label.extend(merged[40:50])
+            train_label.extend(bucket[:train_n])
+            validation_label.extend(
+                bucket[train_n:train_n + validation_n]
+            )
+            test_label.extend(bucket[train_n + validation_n:])
+
+        if len(train_label) != train_per_class:
+            raise ValueError(f"{label}: unexpected train split size.")
+        if len(validation_label) != validation_per_class:
+            raise ValueError(f"{label}: unexpected validation split size.")
+        if len(test_label) != test_per_class:
+            raise ValueError(f"{label}: unexpected test split size.")
 
         train.extend(train_label)
         validation.extend(validation_label)
@@ -290,18 +332,27 @@ def write_csv(path: Path, rows: Sequence[SemanticSample]) -> None:
 def print_distribution(name: str, rows: Sequence[SemanticSample]) -> None:
     label_counts = Counter(row.label for row in rows)
     pattern_counts = Counter(row.pattern for row in rows)
+    difficulty_counts = Counter(row.difficulty for row in rows)
+
     print(f"{name:<12}: {len(rows):>3} samples")
     print(
-        "  labels  : "
+        "  labels    : "
         + ", ".join(
             f"{label}={label_counts[label]}" for label in LABELS
         )
     )
     print(
-        "  patterns: "
+        "  patterns  : "
         + ", ".join(
             f"{pattern}={pattern_counts[pattern]}"
             for pattern in sorted(pattern_counts)
+        )
+    )
+    print(
+        "  difficulty: "
+        + ", ".join(
+            f"{name}={difficulty_counts[name]}"
+            for name in sorted(difficulty_counts)
         )
     )
 
@@ -311,13 +362,20 @@ def main() -> None:
     output_dir = Path(args.output_dir)
 
     rows = generate_samples(args.samples_per_class)
-    train, validation, test = stratified_pattern_split(rows, args.seed)
+    train, validation, test = stratified_pattern_split(
+        rows,
+        args.samples_per_class,
+        args.seed,
+    )
 
+    total = len(rows)
     outputs = {
-        "all": output_dir / "semantic_v2_all_300.csv",
-        "train": output_dir / "semantic_v2_train_180.csv",
-        "validation": output_dir / "semantic_v2_validation_60.csv",
-        "test": output_dir / "semantic_v2_test_60.csv",
+        "all": output_dir / f"semantic_v2_all_{total}.csv",
+        "train": output_dir / f"semantic_v2_train_{len(train)}.csv",
+        "validation": output_dir / (
+            f"semantic_v2_validation_{len(validation)}.csv"
+        ),
+        "test": output_dir / f"semantic_v2_test_{len(test)}.csv",
     }
 
     write_csv(outputs["all"], rows)
@@ -328,8 +386,9 @@ def main() -> None:
     print()
     print("LLM_SEM Semantic Dataset v2 Generator")
     print("-------------------------------------")
-    print("Seed       :", args.seed)
-    print("Output dir :", output_dir)
+    print("Seed              :", args.seed)
+    print("Samples per class :", args.samples_per_class)
+    print("Output dir        :", output_dir)
     print()
     print_distribution("All", rows)
     print_distribution("Train", train)
@@ -342,8 +401,8 @@ def main() -> None:
         print(path)
     print()
     print(
-        "CSV compatibility: existing LLM_SEM tools only require label,text; "
-        "pattern,difficulty are optional metadata."
+        "Each pattern is represented in every class and every split. "
+        "Existing LLM_SEM tools remain compatible with label,text."
     )
 
 
