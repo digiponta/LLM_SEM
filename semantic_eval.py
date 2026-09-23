@@ -29,6 +29,8 @@ POOLING_METHODS = ("mean", "last", "bos", "max", "attention")
 class LabeledSentence:
     label: str
     text: str
+    pattern: str = ""
+    difficulty: str = ""
 
 
 DEFAULT_BENCHMARK: Sequence[LabeledSentence] = (
@@ -111,6 +113,8 @@ def load_benchmark(filename: str | None) -> List[LabeledSentence]:
                 LabeledSentence(
                     label=str(item["label"]).strip(),
                     text=str(item["text"]).strip(),
+                    pattern=str(item.get("pattern", "")).strip(),
+                    difficulty=str(item.get("difficulty", "")).strip(),
                 )
             )
 
@@ -132,6 +136,8 @@ def load_benchmark(filename: str | None) -> List[LabeledSentence]:
                     LabeledSentence(
                         label=str(row["label"]).strip(),
                         text=str(row["text"]).strip(),
+                        pattern=str(row.get("pattern", "")).strip(),
+                        difficulty=str(row.get("difficulty", "")).strip(),
                     )
                 )
     else:
