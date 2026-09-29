@@ -121,3 +121,67 @@ def exact_memory_label(
         if normalize_text(row.text) == target:
             return row.label
     return None
+
+
+def forget_semantic_memory(
+    path: Path,
+    text: str,
+) -> bool:
+    """Remove all adaptive-memory entries matching the normalized text."""
+    target = normalize_text(text)
+    if not path.exists():
+        return False
+
+    kept = []
+    removed = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        item = json.loads(raw)
+        item_text = normalize_text(str(item.get("text", "")))
+        if item_text == target:
+            removed = True
+            continue
+        kept.append(item)
+
+    if removed:
+        path.write_text(
+            "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in kept),
+            encoding="utf-8",
+        )
+    return removed
+
+
+def relabel_semantic_memory(
+    path: Path,
+    text: str,
+    new_label: str,
+) -> bool:
+    """Replace the label for all adaptive-memory entries matching text."""
+    target = normalize_text(text)
+    new_label = normalize_text(new_label)
+    if not new_label:
+        raise ValueError("new_label must not be empty")
+    if not path.exists():
+        return False
+
+    rows = []
+    changed = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        item = json.loads(raw)
+        item_text = normalize_text(str(item.get("text", "")))
+        if item_text == target:
+            item["label"] = new_label
+            item["source"] = "chat-relabel"
+            item["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            changed = True
+        rows.append(item)
+
+    if changed:
+        path.write_text(
+            "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in rows),
+            encoding="utf-8",
+        )
+    return changed
