@@ -672,3 +672,83 @@ discovery-first:
 
 If no threshold pair satisfies the requested Known Recall constraint, the
 balanced policy falls back to the threshold pair with the highest Known Recall.
+
+
+## v0.3 Adaptive Semantic Learning
+
+Branch `v0.3` adds a first adaptive-learning loop to LLM_SEM without
+retraining the frozen Transformer for every correction.
+
+The key idea is to keep the base semantic encoder frozen and append manually
+taught utterances to a persistent semantic memory. The centroid router is then
+refit immediately from the original benchmark plus the adaptive examples.
+
+```text
+User utterance
+      |
+Frozen semantic encoder
+      |
+Semantic vector
+      |
+Centroid router
+      |
++-----+-------------------+
+|                         |
+Known / ACCEPT        Unknown / Review
+|                         |
+route to class         /teach <label>
+                          |
+                  semantic_memory.jsonl
+                          |
+                    refit centroids
+                          |
+                 next query can be Known
+```
+
+New files:
+
+```text
+adaptive_semantic_learning.py             persistent labeled semantic memory
+chat.py                                   interactive adaptive semantic shell
+run_adaptive_semantic_learning_regression_v03.py
+                                          memory/deduplication regression tests
+```
+
+Run the regression first:
+
+```powershell
+python run_adaptive_semantic_learning_regression_v03.py
+```
+
+Then start the adaptive semantic shell:
+
+```powershell
+python chat.py
+```
+
+Interactive commands:
+
+```text
+/learn on|off|status
+/teach <label>
+/memory
+/quit
+```
+
+Example learning cycle:
+
+```text
+You> 明日の大阪は傘が必要ですか
+SEM> UNKNOWN_KNOWLEDGE ...
+
+You> /teach weather
+Learned: label='weather', text='明日の大阪は傘が必要ですか'
+
+You> 明日の大阪は傘が必要ですか
+SEM> ACCEPT  label=weather ...
+```
+
+This is intentionally a semantic-memory update rather than full model
+fine-tuning. It provides a low-risk first step for Adaptive Semantic Learning:
+unknown or ambiguous semantic regions can be corrected interactively while the
+base language model remains unchanged.
