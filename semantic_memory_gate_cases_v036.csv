@@ -1,0 +1,15 @@
+expected_label,should_accept,text
+computer,true,量子コンピュータの仕組みを教えて
+computer,true,量子計算とは何ですか
+computer,true,量子計算の仕組みを説明してください
+computer,true,スーパーコンピュータとは何ですか
+computer,true,GPUによる並列計算を説明して
+science,true,量子力学を説明してください
+science,true,量子暗号について説明して
+science,true,量子力学の基本を教えて
+science,true,物理学における量子とは何ですか
+science,true,量子状態について説明して
+REJECT,false,今日の天気を教えて
+REJECT,false,寿司について教えて
+REJECT,false,猫について説明して
+REJECT,false,東京駅への行き方を教えて
