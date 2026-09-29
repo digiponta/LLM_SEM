@@ -1,8 +1,8 @@
 # adaptive_semantic_runtime.py
 #
-# LLM_SEM v0.4.4 Adaptive Override Runtime
+# LLM_SEM v0.4.6 Local Evidence Runtime
 #
-# Runtime policy distilled from v0.4.1-v0.4.3 experiments:
+# Runtime policy distilled from v0.4.1-v0.4.5 experiments:
 #   - Base Router is fixed on the base benchmark.
 #   - Adaptive Memory is independent and can change online.
 #   - Multi-Prototype memory: 2 prototypes per label by default.
@@ -11,12 +11,14 @@
 #   - Conditional adaptive override:
 #         memory_label != base_label
 #         AND memory_sim >= 0.92
-#         AND teaching support >= 1
-#   - Prototype margin is diagnostic only.
+#         AND top-k local majority label == memory_label
+#         AND local purity >= 0.60
+#   - Default local k = 3.
+#   - Prototype margin remains diagnostic only.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Sequence
 
@@ -39,7 +41,9 @@ class RuntimeDecision:
     label: str
     memory_similarity: float
     memory_margin: float | None
-    support_count: int
+    local_majority_label: str
+    local_purity: float
+    local_k: int
     base_label: str
     base_similarity: float
     agreement: bool
@@ -139,18 +143,30 @@ def rank_multi_prototypes(
     return scored
 
 
-def teaching_support_count(
+def local_evidence(
     query: torch.Tensor,
     memory: Sequence[RuntimeMemoryVector],
-    label: str,
-    similarity_floor: float = 0.90,
-) -> int:
-    return sum(
-        1
-        for row in memory
-        if row.label == label
-        and float(torch.dot(query, row.vector).item()) >= similarity_floor
-    )
+    k: int = 3,
+):
+    if not memory:
+        return "", 0.0, []
+
+    neighbors = sorted(
+        (
+            (
+                float(torch.dot(query, row.vector).item()),
+                row.label,
+                row.text,
+            )
+            for row in memory
+        ),
+        reverse=True,
+    )[:max(1, min(k, len(memory)))]
+
+    counts = Counter(label for _, label, _ in neighbors)
+    majority_label, majority_count = counts.most_common(1)[0]
+    purity = majority_count / len(neighbors)
+    return majority_label, purity, neighbors
 
 
 def decide_adaptive_route(
@@ -161,8 +177,8 @@ def decide_adaptive_route(
     *,
     base_similarity_threshold: float = 0.80,
     override_similarity_threshold: float = 0.92,
-    override_support_threshold: int = 1,
-    support_similarity_floor: float = 0.90,
+    local_k: int = 3,
+    local_purity_threshold: float = 0.60,
 ) -> RuntimeDecision | None:
     if not prototypes:
         return None
@@ -178,11 +194,11 @@ def decide_adaptive_route(
 
     base_top1 = router.route(text)[0]
     agreement = mem_label == base_top1.label
-    support = teaching_support_count(
+
+    majority_label, purity, _ = local_evidence(
         query,
         memory,
-        mem_label,
-        similarity_floor=support_similarity_floor,
+        k=local_k,
     )
 
     if mem_sim >= base_similarity_threshold and agreement:
@@ -190,7 +206,8 @@ def decide_adaptive_route(
     elif (
         not agreement
         and mem_sim >= override_similarity_threshold
-        and support >= override_support_threshold
+        and majority_label == mem_label
+        and purity >= local_purity_threshold
     ):
         action = "ADAPTIVE_OVERRIDE"
     elif mem_sim >= base_similarity_threshold:
@@ -203,7 +220,9 @@ def decide_adaptive_route(
         label=mem_label,
         memory_similarity=mem_sim,
         memory_margin=mem_margin,
-        support_count=support,
+        local_majority_label=majority_label,
+        local_purity=purity,
+        local_k=min(local_k, len(memory)),
         base_label=base_top1.label,
         base_similarity=base_top1.similarity,
         agreement=agreement,
