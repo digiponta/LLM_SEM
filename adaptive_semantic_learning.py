@@ -109,3 +109,15 @@ def merge_samples(
 
 def pending_count(path: Path) -> int:
     return len(load_semantic_memory(path))
+
+
+def exact_memory_label(
+    path: Path,
+    text: str,
+) -> str | None:
+    """Return the explicitly taught label for an exact normalized utterance."""
+    target = normalize_text(text)
+    for row in load_semantic_memory(path):
+        if normalize_text(row.text) == target:
+            return row.label
+    return None
