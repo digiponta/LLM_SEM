@@ -752,3 +752,15 @@ This is intentionally a semantic-memory update rather than full model
 fine-tuning. It provides a low-risk first step for Adaptive Semantic Learning:
 unknown or ambiguous semantic regions can be corrected interactively while the
 base language model remains unchanged.
+
+
+## License
+
+This project is licensed under the **Apache License 2.0**.
+
+You may use, modify, and distribute this software in accordance with the terms of the Apache License, Version 2.0.
+
+See the `LICENSE` file for the full license text.
+
+Apache License 2.0  
+Copyright (c) Hirofumi Inomata
