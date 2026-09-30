@@ -2700,3 +2700,185 @@ RESULT: PASS
 
 Also, remaining v0.6.1 labels in `chat.py` help/description text were updated
 to v0.6.5.
+
+
+## v0.6 Series Summary
+
+The v0.6 series establishes Semantic Composition as a validated runtime
+capability rather than only an offline experiment.
+
+### Progression
+
+```text
+v0.6.1  Unified Semantic Runtime
+        Adaptive Memory + Local Evidence + Semantic Data v2
+
+v0.6.2  Semantic Composition
+        Compare simple mean, role-aware, relation-weighted,
+        and learned proposition composition
+
+v0.6.3  Adaptive Composition
+        Select composition policy from semantic novelty
+
+v0.6.4  Confirmatory Holdout
+        Freeze the v0.6.3 gate and verify it on new D/E/F/G cases
+
+v0.6.5  Runtime Promotion
+        Move the confirmed adaptive composition policy into chat.py
+
+v0.6.6  Runtime Validation
+        Validate proposition extraction -> adaptive composition
+        -> adaptive proposition vector -> SemanticDataV2
+```
+
+### Key measured results
+
+v0.6.2 established that structural role-aware composition generalized better
+than a simple vector mean and better overall than the train-only learned
+composer on the original A/B/C holdouts:
+
+```text
+Cross-split A/B/C
+
+simple_mean      4/11   mean margin -0.009362
+role_aware      10/11   mean margin +0.012679
+relation_weighted
+                 9/11   mean margin +0.006192
+learned_comp     9/11   mean margin +0.010585
+```
+
+v0.6.3 then introduced the adaptive gate. On the same exploratory A/B/C
+evaluation it preserved 10/11 positive cases and increased mean margin:
+
+```text
+balanced       10/11   +0.012679
+adaptive_gate  10/11   +0.013768
+```
+
+Because that rule was designed after inspecting v0.6.2, v0.6.4 evaluated the
+frozen policy on new confirmatory D/E/F/G cases:
+
+```text
+balanced       10/13   +0.005945
+adaptive_gate  10/13   +0.006517
+
+Positive-case delta : +0
+Mean-margin delta   : +0.000572
+Confirmed           : True
+```
+
+This confirmed that the adaptive gate could improve structural margin without
+reducing the number of positive-margin cases on the new holdout.
+
+### Confirmed runtime policy
+
+The runtime policy promoted in v0.6.5 is:
+
+```text
+known relation
+  -> balanced
+  -> S=0.333 P=0.333 O=0.333
+
+unseen relation + subject/object both seen in TRAIN
+  -> relation_aware
+  -> S=0.25 P=0.50 O=0.25
+
+otherwise
+  -> balanced
+```
+
+The policy remains deliberately interpretable and non-neural.
+
+### Current runtime architecture
+
+```text
+User utterance
+    |
+    +--> Base Semantic Router
+    |
+    +--> Adaptive Semantic Memory
+    |      +--> Multi-Prototype memory
+    |      +--> Local k-NN evidence
+    |      +--> Conditional override
+    |
+    +--> Purpose / Intent extraction
+    |
+    +--> Relation / Proposition extraction
+    |
+    +--> Structural Role Projection
+    |      +--> Subject
+    |      +--> Predicate
+    |      +--> Object
+    |
+    +--> Adaptive Composition Gate
+    |      +--> balanced
+    |      +--> relation_aware
+    |
+    +--> Adaptive Proposition Vector
+    |
+    +--> SemanticDataV2
+           +--> global vector
+           +--> concept vectors
+           +--> purpose vector
+           +--> relation vectors
+           +--> proposition vectors
+           +--> confidence / uncertainty
+           +--> composition provenance
+           +--> runtime provenance
+```
+
+### Regression and runtime validation
+
+The following checks are available:
+
+```powershell
+python run_v061_regression.py
+python run_v065_regression.py
+python run_composition_runtime_validation_v066.py
+```
+
+Observed results:
+
+```text
+v0.6.1 regression : PASS
+v0.6.5 regression : PASS
+v0.6.6 runtime validation : PASS
+```
+
+The v0.6.6 validation exercised actual proposition inputs and verified both
+composition branches:
+
+```text
+GPUは高速
+  -> has_property
+  -> balanced
+
+GPUはcomputer
+  -> has_predicate
+  -> relation_aware
+
+GPUは計算装置
+  -> has_predicate
+  -> balanced
+```
+
+### v0.6 conclusion
+
+The v0.6 series supports the following implementation-level conclusion:
+
+```text
+Semantic meaning is not represented only as one vector.
+
+It is represented as:
+  semantic components
+  + structural roles
+  + explicit relations
+  + proposition structure
+  + adaptive composition policy
+  + composed proposition vectors
+  + provenance
+```
+
+This provides the baseline for v0.7, where the next research target is to move
+from single-proposition composition to multi-proposition semantic structure and
+Semantic Graph processing.
