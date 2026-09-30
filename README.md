@@ -1377,3 +1377,89 @@ The expected result is:
 ```text
 Result: 6/6 passed
 ```
+
+
+## v0.3.6 Proposition / Subject-Predicate Relation Extraction
+
+The `v0.3` branch now extracts a lightweight proposition structure from
+Japanese concept phrases before building `SemanticDataV2`.
+
+New file:
+
+```text
+semantic_proposition_v036.py
+```
+
+Primary example:
+
+```text
+Input       : なぜGPUは高速ですか
+Concept     : GPUは高速
+Intent      : why
+Proposition : GPU --has_property--> 高速
+Purpose     : explain_reason(GPU, 高速)
+```
+
+The proposition extractor uses transparent Japanese particle rules. The first
+baseline supports:
+
+```text
+は / が -> subject + predicate phrase
+を      -> implicit_subject --acts_on--> object
+に      -> implicit_subject --targets--> object
+で      -> implicit_subject --context_of_action--> object
+と      -> implicit_subject --related_with--> object
+```
+
+For topic/subject forms, simple property expressions such as `高速`,
+`安全`, `重要`, `可能`, etc. are normalized as:
+
+```text
+subject --has_property--> property
+```
+
+More general predicate phrases are retained as:
+
+```text
+subject --has_predicate--> predicate_phrase
+```
+
+Example:
+
+```text
+CPUは命令を実行する
+-> CPU --has_predicate--> 命令を実行する
+```
+
+These proposition relations are merged with the existing two relation families:
+
+```text
+semantic relations   = what the user asks for
+proposition relations= what semantic statement is being referred to
+runtime relations    = how the router/memory system decided
+```
+
+For `why` queries, Purpose is refined when a proposition is available:
+
+```text
+Before:
+explain_reason(GPUは高速)
+
+After:
+explain_reason(GPU, 高速)
+```
+
+A regression test is included:
+
+```powershell
+python run_semantic_proposition_regression_v036.py
+```
+
+Expected result:
+
+```text
+Result: 3/3 passed
+```
+
+The extractor is intentionally conservative. If no proposition is recognized,
+the existing v0.3.5 semantic relation behavior is preserved.
