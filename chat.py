@@ -33,6 +33,7 @@ from semantic_relations_v035 import generate_semantic_relations
 from semantic_proposition_v036 import (
     extract_propositions,
     proposition_concepts,
+    proposition_specs,
     refine_purpose,
 )
 from tokenizer import Tokenizer
@@ -168,10 +169,30 @@ def print_semantic_v2(summary: dict[str, object], runtime: dict[str, object]) ->
                 if isinstance(confidence, (int, float))
                 else ""
             )
+            vector_dimension = rel.get("vector_dimension")
+            vec_text = (
+                f" vec={vector_dimension}"
+                if isinstance(vector_dimension, int)
+                else ""
+            )
             print(
                 "    "
                 f"{rel.get('subject')} --{rel.get('predicate')}--> "
-                f"{rel.get('object')}{conf_text}"
+                f"{rel.get('object')}{conf_text}{vec_text}"
+            )
+
+    propositions = summary.get("propositions") or []
+    if propositions:
+        print("V2> propositions:")
+        for prop in propositions:
+            if not isinstance(prop, dict):
+                continue
+            print(
+                "    "
+                f"{prop.get('proposition_id')}: "
+                f"{prop.get('subject')} --{prop.get('predicate')}--> "
+                f"{prop.get('object')} "
+                f"vec={prop.get('vector_dimension')}"
             )
 
     gate_state = context.get("gate_state") if isinstance(context, dict) else None
@@ -378,7 +399,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.3.7 Proposition-Aware Concept Separation")
+    print(" LLM_SEM v0.3.9 Proposition / Relation Vector")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -514,6 +535,7 @@ def main() -> None:
                         purpose_text=purpose_text,
                         concept_texts=concept_texts,
                     )
+                    prop_specs = proposition_specs(propositions)
                     after_runtime = {
                         "memory_label": after_snapshot.memory_label,
                         "memory_similarity": (
@@ -570,6 +592,7 @@ def main() -> None:
                         purpose_text=purpose_text,
                         intent=extracted.intent,
                         extra_relations=semantic_relations,
+                        proposition_specs=prop_specs,
                     )
                     print("TCH> SemanticDataV2 after teaching:")
                     print_semantic_v2(
@@ -621,6 +644,7 @@ def main() -> None:
                 purpose_text=purpose_text,
                 concept_texts=concept_texts,
             )
+            prop_specs = proposition_specs(propositions)
             adaptive = load_semantic_memory(memory_path)
             taught_label = exact_memory_label(memory_path, text)
             candidate_rows = ranked[: min(3, len(ranked))]
@@ -679,6 +703,7 @@ def main() -> None:
                 purpose_text=purpose_text,
                 intent=extracted.intent,
                 extra_relations=semantic_relations,
+                proposition_specs=prop_specs,
             )
             print_semantic_v2(runtime_summary(last_semantic_v2), runtime)
 
