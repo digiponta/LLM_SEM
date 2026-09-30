@@ -28,6 +28,7 @@ from semantic_router import (
     get_policy_thresholds,
 )
 from semantic_runtime_v2 import from_runtime_dict, runtime_summary
+from semantic_intent_v034 import extract_purpose_intent
 from tokenizer import Tokenizer
 
 
@@ -196,6 +197,19 @@ def print_semantic_v2(summary: dict[str, object], runtime: dict[str, object]) ->
         f"decision_source={runtime.get('decision_source') or 'router'} "
         f"review_recommended={bool(runtime.get('review_recommended'))}"
     )
+    extraction_rule = runtime.get("extraction_rule")
+    extraction_confidence = runtime.get("extraction_confidence")
+    if extraction_rule is not None:
+        conf = (
+            f"{float(extraction_confidence):.3f}"
+            if isinstance(extraction_confidence, (int, float))
+            else "n/a"
+        )
+        print(
+            f"V2> extraction rule={extraction_rule} "
+            f"confidence={conf}"
+        )
+
     reason = runtime.get("gate_reason")
     if reason:
         print(f"V2> gate_reason={reason}")
@@ -340,7 +354,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.3.3 Memory-Aware Gate / Explicit Override")
+    print(" LLM_SEM v0.3.4 Purpose / Intent Extraction")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -455,6 +469,7 @@ def main() -> None:
                 last_snapshot = after_snapshot
 
                 if semantic_v2_enabled:
+                    extracted = extract_purpose_intent(last_text)
                     after_runtime = {
                         "memory_label": after_snapshot.memory_label,
                         "memory_similarity": (
@@ -487,11 +502,14 @@ def main() -> None:
                         "adaptive_samples": len(adaptive),
                         "memory_labels": len({row.label for row in adaptive}),
                         "metadata": {
-                            "runtime": "v0.3.3-teaching-effect",
+                            "runtime": "v0.3.4-teaching-effect",
                             "router": "adaptive-centroid",
                             "policy": args.policy,
                             "event": "after-teach",
+                            "intent_rule": extracted.rule,
                         },
+                        "extraction_rule": extracted.rule,
+                        "extraction_confidence": extracted.confidence,
                         "gate_reason": gate_reason(
                             after_snapshot.gate,
                             after_snapshot.similarity,
@@ -504,9 +522,12 @@ def main() -> None:
                         tokenizer,
                         last_text,
                         after_runtime,
-                        concept_texts=[after_snapshot.selected_label],
-                        purpose_text=last_text,
-                        intent=None,
+                        concept_texts=(
+                            extracted.concept_texts
+                            + [after_snapshot.selected_label]
+                        ),
+                        purpose_text=extracted.purpose_text,
+                        intent=extracted.intent,
                     )
                     print("TCH> SemanticDataV2 after teaching:")
                     print_semantic_v2(
@@ -537,6 +558,7 @@ def main() -> None:
         )
 
         if semantic_v2_enabled:
+            extracted = extract_purpose_intent(text)
             adaptive = load_semantic_memory(memory_path)
             taught_label = exact_memory_label(memory_path, text)
             candidate_rows = ranked[: min(3, len(ranked))]
@@ -571,10 +593,13 @@ def main() -> None:
                 "adaptive_samples": len(adaptive),
                 "memory_labels": len({row.label for row in adaptive}),
                 "metadata": {
-                    "runtime": "v0.3.3-chat-native",
+                    "runtime": "v0.3.4-chat-native",
                     "router": "adaptive-centroid",
                     "policy": args.policy,
+                    "intent_rule": extracted.rule,
                 },
+                "extraction_rule": extracted.rule,
+                "extraction_confidence": extracted.confidence,
                 "gate_reason": gate_reason(
                     gate,
                     last_snapshot.similarity,
@@ -588,9 +613,12 @@ def main() -> None:
                 tokenizer,
                 text,
                 runtime,
-                concept_texts=[last_snapshot.selected_label],
-                purpose_text=text,
-                intent=None,
+                concept_texts=(
+                    extracted.concept_texts
+                    + [last_snapshot.selected_label]
+                ),
+                purpose_text=extracted.purpose_text,
+                intent=extracted.intent,
             )
             print_semantic_v2(runtime_summary(last_semantic_v2), runtime)
 
