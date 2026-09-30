@@ -244,6 +244,7 @@ def build_runtime_semantic_v2(
     purpose_text: Optional[str] = None,
     intent: Optional[str] = None,
     extra_relations: Optional[Sequence[SemanticRelation]] = None,
+    proposition_specs: Optional[Sequence[Dict[str, object]]] = None,
 ) -> SemanticDataV2:
     """Build Semantic Data v2.0 from one runtime decision.
 
@@ -274,13 +275,14 @@ def build_runtime_semantic_v2(
         purpose_text=purpose_text,
         intent=intent,
         relations=merged_relations,
+        proposition_specs=proposition_specs,
         context_text=None,
         context_attributes=runtime_context(signals).attributes,
         confidence=confidence,
         uncertainty=uncertainty,
         metadata={
-            "runtime_adapter": "v0.3.5",
-            "source_runtime": "LLM_SEM v0.3 adaptive",
+            "runtime_adapter": "v0.3.9",
+            "source_runtime": "LLM_SEM v0.4 branch",
             **signals.metadata,
         },
     )
@@ -298,6 +300,7 @@ def from_runtime_dict(
     purpose_text: Optional[str] = None,
     intent: Optional[str] = None,
     extra_relations: Optional[Sequence[SemanticRelation]] = None,
+    proposition_specs: Optional[Sequence[Dict[str, object]]] = None,
 ) -> SemanticDataV2:
     """Convenience adapter for chat.py-style dictionaries.
 
@@ -318,6 +321,7 @@ def from_runtime_dict(
         purpose_text=purpose_text,
         intent=intent,
         extra_relations=extra_relations,
+        proposition_specs=proposition_specs,
     )
 
 
@@ -336,8 +340,22 @@ def runtime_summary(semantic: SemanticDataV2) -> Dict[str, object]:
                 "predicate": r.predicate,
                 "object": r.object,
                 "confidence": r.confidence,
+                "vector_dimension": (
+                    r.vector.dimension if r.vector is not None else None
+                ),
             }
             for r in semantic.relations
+        ],
+        "propositions": [
+            {
+                "proposition_id": p.proposition_id,
+                "subject": p.subject,
+                "predicate": p.predicate,
+                "object": p.object,
+                "confidence": p.confidence,
+                "vector_dimension": p.vector.dimension,
+            }
+            for p in semantic.propositions
         ],
         "context": (
             semantic.context.attributes if semantic.context is not None else {}
