@@ -2175,3 +2175,106 @@ Results are saved to:
 ```text
 results/role_synergy_v045.pt
 ```
+
+
+## v0.6.1 Unified Semantic Runtime
+
+v0.6.1 integrates the previously separate semantic subsystems into the
+interactive `chat.py` runtime.
+
+Integrated path:
+
+```text
+User utterance
+    |
+    +--> Fixed Base Router
+    |
+    +--> Adaptive Semantic Memory
+    |      +--> Multi-Prototype memory
+    |      +--> Local k-NN evidence
+    |      +--> Conditional adaptive override
+    |
+    +--> Semantic Data v2.0
+           +--> concept vectors
+           +--> purpose / intent
+           +--> semantic relations
+           +--> proposition vectors
+           +--> confidence / uncertainty
+           +--> runtime provenance
+```
+
+The base Transformer remains frozen. Adaptive decisions use the v0.4.6 policy:
+
+```text
+normal accept:
+  memory_similarity >= 0.80
+  AND adaptive label == base label
+
+adaptive override:
+  adaptive label != base label
+  AND memory_similarity >= 0.92
+  AND local majority == adaptive label
+  AND local purity >= 0.60
+```
+
+Default runtime parameters:
+
+```text
+prototypes / label : 2
+local k            : 3
+local purity       : 0.60
+memory similarity  : 0.80
+override similarity: 0.92
+```
+
+New runtime command:
+
+```text
+/runtime
+```
+
+This prints the active unified-runtime policy.
+
+The normal chat path now reports both the semantic routing result and local
+adaptive evidence. A high-confidence disagreement supported by local evidence
+is surfaced as:
+
+```text
+ACCEPT_ADAPTIVE
+```
+
+Semantic Data v2 continues to record concepts, purpose, relations,
+propositions, confidence, uncertainty, gate state, decision margin, and
+runtime provenance.
+
+### Regression
+
+A fast integration regression was added:
+
+```powershell
+python run_v061_regression.py
+```
+
+It does not load the full language-model checkpoint. It verifies:
+
+```text
+chat.py syntax
+v0.6.1 integration markers
+Semantic Data v2 wiring
+relation / proposition wiring
+multi-prototype adaptive runtime wiring
+local-evidence ACCEPT behavior
+conditional ADAPTIVE_OVERRIDE behavior
+safe fallback / review behavior
+required runtime files
+```
+
+A successful run ends with:
+
+```text
+RESULT: PASS
+```
+
+This branch therefore establishes a single runtime path from adaptive semantic
+memory through structured Semantic Data, providing the baseline for the next
+stage: Semantic Composition.
