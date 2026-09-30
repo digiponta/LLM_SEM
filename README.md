@@ -2545,3 +2545,110 @@ Results are saved to:
 ```text
 results/adaptive_composition_confirmatory_v064.pt
 ```
+
+
+## v0.6.5 Adaptive Composition Runtime Integration
+
+v0.6.5 promotes the adaptive composition policy confirmed in v0.6.4 from an
+experiment into the interactive runtime.
+
+New runtime module:
+
+```text
+adaptive_composition_runtime_v065.py
+```
+
+The confirmed policy remains frozen:
+
+```text
+known relation
+  -> balanced
+  -> S=0.333 P=0.333 O=0.333
+
+unseen relation + subject/object both seen in TRAIN
+  -> relation_aware
+  -> S=0.25 P=0.50 O=0.25
+
+otherwise
+  -> balanced
+```
+
+### Runtime path
+
+```text
+extracted proposition
+    |
+    +--> subject vector
+    +--> predicate vector
+    +--> object vector
+    |
+    +--> frozen v0.4.3 structural role projection
+    |
+    +--> v0.6.5 novelty gate
+    |
+    +--> balanced / relation_aware composition
+    |
+    +--> adaptive proposition vector
+    |
+    +--> SemanticDataV2.propositions[]
+```
+
+`chat.py` now enables adaptive proposition composition by default.
+
+Relevant options:
+
+```text
+--composition / --no-composition
+--composition-checkpoint model/structural-role-projection-v043.pt
+```
+
+Each proposition records provenance:
+
+```text
+composition_version
+composition_mode
+composition_weights
+composition_reason
+relation_seen
+subject_seen
+object_seen
+composition_confidence
+role_checkpoint
+```
+
+The interactive Semantic Data v2 summary also displays the composition mode,
+weights, novelty state, vector role, and composition confidence.
+
+Semantic Data v2 now accepts a precomputed proposition vector through the
+proposition specification. If no precomputed vector is supplied, the previous
+text-encoded proposition behavior remains unchanged for backward
+compatibility.
+
+### Regression
+
+Run:
+
+```powershell
+python run_v065_regression.py
+```
+
+The regression checks:
+
+```text
+chat.py integration
+composition runtime import
+composition CLI flag
+proposition enrichment
+precomputed vector support
+composition provenance export
+frozen confirmed gate behavior
+known-relation balanced mode
+unseen-relation/seen-concepts relation-aware mode
+partial/new-concept balanced fallback
+```
+
+A successful run ends with:
+
+```text
+RESULT: PASS
+```
