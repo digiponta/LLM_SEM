@@ -9,16 +9,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from semantic import SemanticRelation
 from semantic_intent_v034 import PurposeIntentResult
+from semantic_proposition_v036 import Proposition
 
 
 def generate_semantic_relations(
     extracted: PurposeIntentResult,
+    propositions: Optional[List[Proposition]] = None,
 ) -> List[SemanticRelation]:
-    """Generate explicit semantic relations from Concept / Intent / Purpose."""
+    """Generate semantic relations from Concept / Intent / Purpose / Proposition."""
     relations: List[SemanticRelation] = []
 
     predicate_map = {
@@ -69,5 +71,20 @@ def generate_semantic_relations(
             },
         )
     )
+
+    for proposition in propositions or []:
+        relations.append(
+            SemanticRelation(
+                subject=proposition.subject,
+                predicate=proposition.predicate,
+                object=proposition.object,
+                confidence=proposition.confidence,
+                attributes={
+                    "particle": proposition.particle,
+                    "rule": proposition.rule,
+                    "relation_family": "proposition",
+                },
+            )
+        )
 
     return relations
