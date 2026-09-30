@@ -1995,3 +1995,90 @@ The selected checkpoint is saved as:
 ```text
 model/structural-role-projection-v043.pt
 ```
+
+
+## v0.4.4 Role Ablation / Causal Contribution Analysis
+
+v0.4.4 evaluates the causal contribution of the learned Subject, Predicate,
+and Object pathways in the v0.4.3 Structural Role Projection.
+
+New script:
+
+```powershell
+python run_role_ablation_v044.py
+```
+
+The analysis loads the trained checkpoint:
+
+```text
+model/structural-role-projection-v043.pt
+```
+
+and performs no retraining.
+
+The following variants are compared:
+
+```text
+Full
+  Ws(S) + Wp(P) + Wo(O)
+
+No Subject
+  Wp(P) + Wo(O)
+
+No Predicate
+  Ws(S) + Wo(O)
+
+No Object
+  Ws(S) + Wp(P)
+```
+
+Each ablation is evaluated on the same three holdout splits introduced in
+v0.4.3:
+
+```text
+A) Seen relation / unseen proposition
+B) Unseen relation / seen concepts
+C) Unseen relation / unseen concepts
+```
+
+For each split the script reports:
+
+```text
+Positive-margin cases
+Mean structural margin
+Minimum margin
+Mean semantic preservation
+Delta margin versus Full
+Lost positive-margin cases
+```
+
+The causal contribution of one role is defined as:
+
+```text
+Role contribution
+= Full mean structural margin
+  - Ablated mean structural margin
+```
+
+Interpretation:
+
+```text
+positive contribution
+  -> removing the role hurts structural discrimination
+
+near zero
+  -> role is largely redundant under the current evaluation
+
+negative contribution
+  -> removing the role improves margin, suggesting interference or
+     over-reliance elsewhere
+```
+
+A final cross-split table reports the Subject, Predicate, and Object
+mean-margin drops across A/B/C and identifies the largest average contributor.
+
+Results are saved to:
+
+```text
+results/role_ablation_v044.pt
+```
