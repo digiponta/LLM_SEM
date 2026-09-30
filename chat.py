@@ -29,6 +29,7 @@ from semantic_router import (
 )
 from semantic_runtime_v2 import from_runtime_dict, runtime_summary
 from semantic_intent_v034 import extract_purpose_intent
+from semantic_relations_v035 import generate_semantic_relations
 from tokenizer import Tokenizer
 
 
@@ -149,6 +150,24 @@ def print_semantic_v2(summary: dict[str, object], runtime: dict[str, object]) ->
         f"V2> purpose={purpose!r}"
         + (f" intent={intent}" if intent else "")
     )
+
+    relations = summary.get("relations") or []
+    if relations:
+        print("V2> relations:")
+        for rel in relations:
+            if not isinstance(rel, dict):
+                continue
+            confidence = rel.get("confidence")
+            conf_text = (
+                f" [{float(confidence):.3f}]"
+                if isinstance(confidence, (int, float))
+                else ""
+            )
+            print(
+                "    "
+                f"{rel.get('subject')} --{rel.get('predicate')}--> "
+                f"{rel.get('object')}{conf_text}"
+            )
 
     gate_state = context.get("gate_state") if isinstance(context, dict) else None
     decision_margin = (
@@ -354,7 +373,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.3.4 Purpose / Intent Extraction")
+    print(" LLM_SEM v0.3.5 Automatic Relation Generation")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -470,6 +489,7 @@ def main() -> None:
 
                 if semantic_v2_enabled:
                     extracted = extract_purpose_intent(last_text)
+                    semantic_relations = generate_semantic_relations(extracted)
                     after_runtime = {
                         "memory_label": after_snapshot.memory_label,
                         "memory_similarity": (
@@ -502,7 +522,7 @@ def main() -> None:
                         "adaptive_samples": len(adaptive),
                         "memory_labels": len({row.label for row in adaptive}),
                         "metadata": {
-                            "runtime": "v0.3.4-teaching-effect",
+                            "runtime": "v0.3.5-teaching-effect",
                             "router": "adaptive-centroid",
                             "policy": args.policy,
                             "event": "after-teach",
@@ -522,12 +542,10 @@ def main() -> None:
                         tokenizer,
                         last_text,
                         after_runtime,
-                        concept_texts=(
-                            extracted.concept_texts
-                            + [after_snapshot.selected_label]
-                        ),
+                        concept_texts=extracted.concept_texts,
                         purpose_text=extracted.purpose_text,
                         intent=extracted.intent,
+                        extra_relations=semantic_relations,
                     )
                     print("TCH> SemanticDataV2 after teaching:")
                     print_semantic_v2(
@@ -559,6 +577,7 @@ def main() -> None:
 
         if semantic_v2_enabled:
             extracted = extract_purpose_intent(text)
+            semantic_relations = generate_semantic_relations(extracted)
             adaptive = load_semantic_memory(memory_path)
             taught_label = exact_memory_label(memory_path, text)
             candidate_rows = ranked[: min(3, len(ranked))]
@@ -593,7 +612,7 @@ def main() -> None:
                 "adaptive_samples": len(adaptive),
                 "memory_labels": len({row.label for row in adaptive}),
                 "metadata": {
-                    "runtime": "v0.3.4-chat-native",
+                    "runtime": "v0.3.5-chat-native",
                     "router": "adaptive-centroid",
                     "policy": args.policy,
                     "intent_rule": extracted.rule,
@@ -613,12 +632,10 @@ def main() -> None:
                 tokenizer,
                 text,
                 runtime,
-                concept_texts=(
-                    extracted.concept_texts
-                    + [last_snapshot.selected_label]
-                ),
+                concept_texts=extracted.concept_texts,
                 purpose_text=extracted.purpose_text,
                 intent=extracted.intent,
+                extra_relations=semantic_relations,
             )
             print_semantic_v2(runtime_summary(last_semantic_v2), runtime)
 
