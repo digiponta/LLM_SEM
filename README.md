@@ -1463,3 +1463,81 @@ Result: 3/3 passed
 
 The extractor is intentionally conservative. If no proposition is recognized,
 the existing v0.3.5 semantic relation behavior is preserved.
+
+
+## v0.3.6.1 Refined Purpose Consistency + v0.3.7 Proposition-Aware Concepts
+
+Two related improvements are now integrated.
+
+First, the refined Purpose produced by proposition extraction is reused
+consistently by the Semantic Relations layer.
+
+Example:
+
+```text
+Input    : なぜGPUは高速ですか
+Purpose  : explain_reason(GPU, 高速)
+```
+
+The same refined Purpose is now used by:
+
+```text
+SemanticDataV2.purpose
+query --has_purpose--> explain_reason(GPU, 高速)
+explain_reason(GPU, 高速) --targets_concept--> ...
+```
+
+This removes the previous split between:
+
+```text
+explain_reason(GPU, 高速)
+and
+explain_reason(GPUは高速)
+```
+
+Second, v0.3.7 uses proposition structure to split Concept Vectors[] into
+semantic components.
+
+Examples:
+
+```text
+GPUが高速
+Before concepts : [GPUが高速]
+After concepts  : [GPU, 高速]
+
+CPUは命令を実行する
+Before concepts : [CPUは命令を実行する]
+After concepts  : [CPU, 命令を実行する]
+```
+
+The proposition itself remains explicit:
+
+```text
+GPU --has_property--> 高速
+CPU --has_predicate--> 命令を実行する
+```
+
+This is the first stage where Semantic Data v2.0 uses multiple concept vectors
+derived from the internal proposition structure rather than merely storing one
+vector for the full phrase.
+
+The proposition regression now verifies:
+
+```text
+- proposition extraction
+- refined Purpose
+- Purpose/Relation consistency
+- proposition-aware Concept separation
+```
+
+Run:
+
+```powershell
+python run_semantic_proposition_regression_v036.py
+```
+
+Expected result:
+
+```text
+Result: 3/3 passed
+```
