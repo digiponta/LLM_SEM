@@ -30,6 +30,7 @@ from semantic_router import (
 from semantic_runtime_v2 import from_runtime_dict, runtime_summary
 from semantic_intent_v034 import extract_purpose_intent
 from semantic_relations_v035 import generate_semantic_relations
+from semantic_proposition_v036 import extract_propositions, refine_purpose
 from tokenizer import Tokenizer
 
 
@@ -373,7 +374,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.3.5 Automatic Relation Generation")
+    print(" LLM_SEM v0.3.6 Proposition Relation Extraction")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -489,7 +490,20 @@ def main() -> None:
 
                 if semantic_v2_enabled:
                     extracted = extract_purpose_intent(last_text)
-                    semantic_relations = generate_semantic_relations(extracted)
+                    propositions = extract_propositions(
+                        extracted.concept_texts[0]
+                        if extracted.concept_texts
+                        else last_text
+                    )
+                    purpose_text = refine_purpose(
+                        extracted.intent,
+                        extracted.purpose_text,
+                        propositions,
+                    )
+                    semantic_relations = generate_semantic_relations(
+                        extracted,
+                        propositions,
+                    )
                     after_runtime = {
                         "memory_label": after_snapshot.memory_label,
                         "memory_similarity": (
@@ -522,7 +536,7 @@ def main() -> None:
                         "adaptive_samples": len(adaptive),
                         "memory_labels": len({row.label for row in adaptive}),
                         "metadata": {
-                            "runtime": "v0.3.5-teaching-effect",
+                            "runtime": "v0.3.6-teaching-effect",
                             "router": "adaptive-centroid",
                             "policy": args.policy,
                             "event": "after-teach",
@@ -543,7 +557,7 @@ def main() -> None:
                         last_text,
                         after_runtime,
                         concept_texts=extracted.concept_texts,
-                        purpose_text=extracted.purpose_text,
+                        purpose_text=purpose_text,
                         intent=extracted.intent,
                         extra_relations=semantic_relations,
                     )
@@ -577,7 +591,20 @@ def main() -> None:
 
         if semantic_v2_enabled:
             extracted = extract_purpose_intent(text)
-            semantic_relations = generate_semantic_relations(extracted)
+            propositions = extract_propositions(
+                extracted.concept_texts[0]
+                if extracted.concept_texts
+                else text
+            )
+            purpose_text = refine_purpose(
+                extracted.intent,
+                extracted.purpose_text,
+                propositions,
+            )
+            semantic_relations = generate_semantic_relations(
+                extracted,
+                propositions,
+            )
             adaptive = load_semantic_memory(memory_path)
             taught_label = exact_memory_label(memory_path, text)
             candidate_rows = ranked[: min(3, len(ranked))]
@@ -612,7 +639,7 @@ def main() -> None:
                 "adaptive_samples": len(adaptive),
                 "memory_labels": len({row.label for row in adaptive}),
                 "metadata": {
-                    "runtime": "v0.3.5-chat-native",
+                    "runtime": "v0.3.6-chat-native",
                     "router": "adaptive-centroid",
                     "policy": args.policy,
                     "intent_rule": extracted.rule,
@@ -633,7 +660,7 @@ def main() -> None:
                 text,
                 runtime,
                 concept_texts=extracted.concept_texts,
-                purpose_text=extracted.purpose_text,
+                purpose_text=purpose_text,
                 intent=extracted.intent,
                 extra_relations=semantic_relations,
             )
