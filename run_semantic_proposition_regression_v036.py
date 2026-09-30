@@ -38,7 +38,7 @@ CASES = [
 
 def main() -> None:
     print("=" * 78)
-    print(" LLM_SEM v0.3.6 Proposition Regression")
+    print(" LLM_SEM v0.3.8 Proposition Binding Regression")
     print("=" * 78)
 
     passed = 0
@@ -77,24 +77,60 @@ def main() -> None:
                     for rel in relations
                     if rel.predicate == "has_purpose"
                 ]
-                purpose_subjects = [
-                    rel.subject
+                query_targets = [
+                    rel.object
                     for rel in relations
-                    if rel.predicate == "targets_concept"
+                    if rel.subject == "query"
+                    and rel.predicate == "requests_reason_for"
+                ]
+                proposition_subjects = [
+                    rel.object
+                    for rel in relations
+                    if rel.subject == "proposition_1"
+                    and rel.predicate == "subject"
+                ]
+                proposition_predicates = [
+                    rel.object
+                    for rel in relations
+                    if rel.subject == "proposition_1"
+                    and rel.predicate == "predicate"
+                ]
+                proposition_objects = [
+                    rel.object
+                    for rel in relations
+                    if rel.subject == "proposition_1"
+                    and rel.predicate == "object"
+                ]
+                purpose_targets = [
+                    rel.object
+                    for rel in relations
+                    if rel.subject == "explain_reason(GPU, 高速)"
+                    and rel.predicate == "targets_proposition"
                 ]
                 ok = (
                     ok
                     and concepts == ["GPU", "高速"]
                     and purpose_objects == ["explain_reason(GPU, 高速)"]
-                    and all(
-                        subject == "explain_reason(GPU, 高速)"
-                        for subject in purpose_subjects
-                    )
+                    and query_targets == ["proposition_1"]
+                    and proposition_subjects == ["GPU"]
+                    and proposition_predicates == ["has_property"]
+                    and proposition_objects == ["高速"]
+                    and purpose_targets == ["proposition_1"]
                 )
             elif text == "CPUは命令を実行する":
                 ok = ok and concepts == ["CPU", "命令を実行する"]
             elif text == "GPUが高速":
-                ok = ok and concepts == ["GPU", "高速"]
+                assertion_targets = [
+                    rel.object
+                    for rel in relations
+                    if rel.subject == "query"
+                    and rel.predicate == "asserts"
+                ]
+                ok = (
+                    ok
+                    and concepts == ["GPU", "高速"]
+                    and assertion_targets == ["proposition_1"]
+                )
 
         status = "PASS" if ok else "FAIL"
         if propositions:
