@@ -3,6 +3,7 @@
 # Regression tests for v0.3.6 proposition extraction.
 
 from semantic_intent_v034 import extract_purpose_intent
+from semantic_relations_v035 import generate_semantic_relations
 from semantic_proposition_v036 import (
     extract_propositions,
     proposition_concepts,
@@ -54,6 +55,12 @@ def main() -> None:
             extracted.concept_texts,
             propositions,
         )
+        relations = generate_semantic_relations(
+            extracted,
+            propositions,
+            purpose_text=purpose,
+            concept_texts=concepts,
+        )
 
         ok = bool(propositions)
         if ok:
@@ -65,7 +72,25 @@ def main() -> None:
                 and purpose == expected_purpose
             )
             if text == "なぜGPUは高速ですか":
-                ok = ok and concepts == ["GPU", "高速"]
+                purpose_objects = [
+                    rel.object
+                    for rel in relations
+                    if rel.predicate == "has_purpose"
+                ]
+                purpose_subjects = [
+                    rel.subject
+                    for rel in relations
+                    if rel.predicate == "targets_concept"
+                ]
+                ok = (
+                    ok
+                    and concepts == ["GPU", "高速"]
+                    and purpose_objects == ["explain_reason(GPU, 高速)"]
+                    and all(
+                        subject == "explain_reason(GPU, 高速)"
+                        for subject in purpose_subjects
+                    )
+                )
             elif text == "CPUは命令を実行する":
                 ok = ok and concepts == ["CPU", "命令を実行する"]
             elif text == "GPUが高速":
