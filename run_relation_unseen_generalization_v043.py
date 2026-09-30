@@ -78,7 +78,7 @@ HOLDOUT_UNSEEN_REL_SEEN_CONCEPTS = [
 
 # C: both relation and core concepts are unseen.
 HOLDOUT_UNSEEN_REL_UNSEEN_CONCEPTS = [
-    Case("sensor-device", "センサー", "is_a", "測定装置", "カメラ", "has_property", "測定装置"),
+    Case("sensor-device", "センサー", "is_a", "測定装置", "カメラ", "has_property", "入力装置"),
     Case("database-stores", "データベース", "has_predicate", "データを保持する", "ファイル", "targets", "データ"),
     Case("cache-part", "キャッシュ", "part_of", "メモリ階層", "CPU", "related_with", "ストレージ階層"),
     Case("heat-causes", "発熱", "causes", "温度上昇", "電圧", "has_property", "温度低下"),
