@@ -1058,3 +1058,73 @@ not treated as a calibrated probability.
 Because the adaptive sample is included when policy thresholds are rebuilt,
 the before/after comparison measures the complete runtime effect of teaching,
 including both centroid changes and any resulting threshold changes.
+
+
+## v0.3.3 Memory-Aware Gate / Explicit Teaching Override
+
+The `v0.3` branch now gives an exact explicit semantic-memory match authority
+over the ordinary centroid similarity thresholds.
+
+Decision order:
+
+```text
+1. Exact semantic-memory match?
+       |
+       +-- yes --> ACCEPT_MEMORY
+       |           selected = taught memory label
+       |           decision_source = explicit_memory
+       |
+       +-- no  --> ordinary centroid gate
+                   ACCEPT / GATE_REVIEW / UNKNOWN_KNOWLEDGE
+```
+
+This solves the v0.3.2 observation where a manually taught exact utterance
+could still remain `UNKNOWN_KNOWLEDGE` because its adaptive-centroid
+similarity was below the normal Known threshold.
+
+The memory override does not erase conflicting base evidence. When the frozen
+base router and explicit semantic memory disagree, the runtime records:
+
+```text
+memory_exact=True
+decision_source=explicit_memory
+disagreement=True
+review_recommended=True
+```
+
+Example:
+
+```text
+You> 暗号
+SEM> ACCEPT_MEMORY  label=computer ...
+
+V2> memory=computer base=science (...) selected=computer
+V2> disagreement=True
+V2> memory_exact=True decision_source=explicit_memory review_recommended=True
+V2> gate_reason=exact semantic-memory match overrides centroid thresholds
+
+SEM> Accepted by exact semantic memory: computer
+SEM> Base/memory disagreement detected; review is recommended.
+```
+
+The SemanticDataV2 runtime adapter now stores explicit memory provenance in
+both context and relations. Exact memory matches use the relation predicate:
+
+```text
+query --explicit_memory_match--> <label>
+```
+
+rather than the weaker `memory_candidate` relation.
+
+This design separates two questions:
+
+```text
+"What label was explicitly taught for this exact utterance?"
+from
+"What label does the frozen/base semantic space currently suggest?"
+```
+
+The centroid similarity is still retained as evidence and is not replaced by
+a synthetic probability. `ACCEPT_MEMORY` therefore means authoritative
+retrieval of an explicit teaching record, not probabilistic certainty that the
+teaching itself is objectively correct.
