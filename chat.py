@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -36,6 +37,20 @@ DEFAULT_BENCHMARK = "my_benchmark.csv"
 DEFAULT_UNKNOWN_BENCHMARK = "unknown_benchmark.csv"
 DEFAULT_MEMORY = "data/semantic_memory.jsonl"
 DEFAULT_POLICY = "balanced"
+
+
+@dataclass
+class TeachingSnapshot:
+    text: str
+    gate: str
+    selected_label: str
+    similarity: float
+    margin: float
+    candidates: list[tuple[str, float]]
+    memory_label: str | None
+    base_label: str
+    base_similarity: float
+    disagreement: bool
 
 
 def parse_args() -> argparse.Namespace:
@@ -179,6 +194,77 @@ def print_semantic_v2(summary: dict[str, object], runtime: dict[str, object]) ->
         print(f"V2> gate_reason={reason}")
 
 
+def make_snapshot(
+    text: str,
+    ranked,
+    thresholds,
+    base_ranked,
+    memory_path: Path,
+) -> TeachingSnapshot:
+    gate, top1, margin = classify_gate(ranked, thresholds)
+    base_top1 = base_ranked[0]
+    memory_label = exact_memory_label(memory_path, text)
+    candidates = [
+        (row.label, float(row.similarity))
+        for row in ranked[: min(3, len(ranked))]
+    ]
+    return TeachingSnapshot(
+        text=text,
+        gate=gate,
+        selected_label=top1.label,
+        similarity=float(top1.similarity),
+        margin=float(margin),
+        candidates=candidates,
+        memory_label=memory_label,
+        base_label=base_top1.label,
+        base_similarity=float(base_top1.similarity),
+        disagreement=bool(
+            memory_label is not None and memory_label != base_top1.label
+        ),
+    )
+
+
+def print_teaching_effect(
+    before: TeachingSnapshot,
+    after: TeachingSnapshot,
+    taught_label: str,
+) -> None:
+    print("TCH> --------------------------------------------------------")
+    print("TCH> Teaching Effect Evaluation")
+    print(f"TCH> text={before.text!r} taught_label={taught_label}")
+    print(
+        f"TCH> before gate={before.gate} selected={before.selected_label} "
+        f"sim={before.similarity:.6f} margin={before.margin:.6f}"
+    )
+    print(
+        f"TCH> after  gate={after.gate} selected={after.selected_label} "
+        f"sim={after.similarity:.6f} margin={after.margin:.6f}"
+    )
+    print(
+        f"TCH> delta_similarity={after.similarity - before.similarity:+.6f} "
+        f"delta_margin={after.margin - before.margin:+.6f}"
+    )
+    print(
+        f"TCH> gate_transition={before.gate}->{after.gate} "
+        f"label_transition={before.selected_label}->{after.selected_label}"
+    )
+    print(
+        f"TCH> memory_before={before.memory_label or '(none)'} "
+        f"memory_after={after.memory_label or '(none)'}"
+    )
+    print(
+        f"TCH> base={after.base_label} ({after.base_similarity:.6f}) "
+        f"disagreement_after={after.disagreement}"
+    )
+    print("TCH> candidates_before:")
+    for index, (label, score) in enumerate(before.candidates, 1):
+        print(f"     {index}. {label:<12} {score:.6f}")
+    print("TCH> candidates_after:")
+    for index, (label, score) in enumerate(after.candidates, 1):
+        print(f"     {index}. {label:<12} {score:.6f}")
+    print("TCH> --------------------------------------------------------")
+
+
 def main() -> None:
     args = parse_args()
 
@@ -202,6 +288,7 @@ def main() -> None:
     semantic_v2_enabled = bool(args.semantic_v2)
     last_text: str | None = None
     last_semantic_v2 = None
+    last_snapshot: TeachingSnapshot | None = None
 
     router = SemanticRouter(model, tokenizer, alpha=args.alpha)
     base_router = SemanticRouter(model, tokenizer, alpha=args.alpha)
@@ -223,7 +310,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.3.1 Semantic Data v2 Runtime Evidence")
+    print(" LLM_SEM v0.3.2 Teaching Effect Evaluation")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -305,6 +392,7 @@ def main() -> None:
                 continue
 
             label = parts[1].strip()
+            before_snapshot = last_snapshot
             added = append_semantic_memory(
                 memory_path,
                 label=label,
@@ -317,14 +405,94 @@ def main() -> None:
                     f"Learned: label={label!r}, text={last_text!r} "
                     f"(adaptive samples={len(adaptive)})"
                 )
+
+                after_ranked = router.route(last_text)
+                after_base_ranked = base_router.route(last_text)
+                after_snapshot = make_snapshot(
+                    last_text,
+                    after_ranked,
+                    thresholds,
+                    after_base_ranked,
+                    memory_path,
+                )
+
+                if before_snapshot is not None:
+                    print_teaching_effect(
+                        before_snapshot,
+                        after_snapshot,
+                        label,
+                    )
+                last_snapshot = after_snapshot
+
+                if semantic_v2_enabled:
+                    after_runtime = {
+                        "memory_label": after_snapshot.memory_label,
+                        "memory_similarity": (
+                            1.0
+                            if after_snapshot.memory_label is not None
+                            else None
+                        ),
+                        "base_label": after_snapshot.base_label,
+                        "base_similarity": after_snapshot.base_similarity,
+                        "gate_state": after_snapshot.gate,
+                        "selected_label": after_snapshot.selected_label,
+                        "selected_similarity": after_snapshot.similarity,
+                        "decision_margin": after_snapshot.margin,
+                        "candidate_labels": [
+                            item[0] for item in after_snapshot.candidates
+                        ],
+                        "candidate_scores": {
+                            item[0]: item[1]
+                            for item in after_snapshot.candidates
+                        },
+                        "confidence": after_snapshot.similarity,
+                        "adaptive_enabled": learning_enabled,
+                        "adaptive_samples": len(adaptive),
+                        "memory_labels": len({row.label for row in adaptive}),
+                        "metadata": {
+                            "runtime": "v0.3.2-teaching-effect",
+                            "router": "adaptive-centroid",
+                            "policy": args.policy,
+                            "event": "after-teach",
+                        },
+                        "gate_reason": gate_reason(
+                            after_snapshot.gate,
+                            after_snapshot.similarity,
+                            after_snapshot.margin,
+                            thresholds,
+                        ),
+                    }
+                    last_semantic_v2 = from_runtime_dict(
+                        model,
+                        tokenizer,
+                        last_text,
+                        after_runtime,
+                        concept_texts=[after_snapshot.selected_label],
+                        purpose_text=last_text,
+                        intent=None,
+                    )
+                    print("TCH> SemanticDataV2 after teaching:")
+                    print_semantic_v2(
+                        runtime_summary(last_semantic_v2),
+                        after_runtime,
+                    )
             else:
                 print("Already learned.")
             continue
 
         last_text = text
         ranked = router.route(text)
-        gate, top1, margin = classify_gate(ranked, thresholds)
         base_ranked = base_router.route(text)
+        last_snapshot = make_snapshot(
+            text,
+            ranked,
+            thresholds,
+            base_ranked,
+            memory_path,
+        )
+        gate = last_snapshot.gate
+        top1 = ranked[0]
+        margin = last_snapshot.margin
         base_top1 = base_ranked[0]
 
         print(
@@ -360,7 +528,7 @@ def main() -> None:
                 "adaptive_samples": len(adaptive),
                 "memory_labels": len({row.label for row in adaptive}),
                 "metadata": {
-                    "runtime": "v0.3.1-chat-native",
+                    "runtime": "v0.3.2-chat-native",
                     "router": "adaptive-centroid",
                     "policy": args.policy,
                 },
