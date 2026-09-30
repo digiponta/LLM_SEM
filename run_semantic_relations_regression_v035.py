@@ -26,6 +26,18 @@ CASES = [
         "requests_how_to_for",
     ),
     (
+        "CUDAの設定方法を教えて",
+        "how_to",
+        "CUDA",
+        "requests_how_to_for",
+    ),
+    (
+        "なぜGPUは高速ですか",
+        "why",
+        "GPUは高速",
+        "requests_reason_for",
+    ),
+    (
         "暗号",
         "unspecified",
         "暗号",
