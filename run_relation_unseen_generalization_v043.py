@@ -71,18 +71,18 @@ HOLDOUT_SEEN_REL = [
 
 # B: relation is unseen, while subject/object reuse concepts represented in TRAIN.
 HOLDOUT_UNSEEN_REL_SEEN_CONCEPTS = [
-    Case("gpu-processor", "GPU", "is_a", "computer", "CPU", "has_property", "computer"),
-    Case("cuda-executes", "CUDA", "has_predicate", "並列計算", "Python", "targets", "並列計算"),
-    Case("python-used-for", "Python", "used_for", "data", "GPU", "related_with", "data"),
+    Case("gpu-processor", "GPU", "is_a", "computer", "CPU", "has_property", "weather"),
+    Case("cuda-executes", "CUDA", "has_predicate", "並列計算", "Python", "targets", "逐次処理"),
+    Case("python-used-for", "Python", "used_for", "data", "GPU", "related_with", "image"),
 ]
 
 # C: both relation and core concepts are unseen.
 HOLDOUT_UNSEEN_REL_UNSEEN_CONCEPTS = [
     Case("sensor-device", "センサー", "is_a", "測定装置", "カメラ", "has_property", "測定装置"),
     Case("database-stores", "データベース", "has_predicate", "データを保持する", "ファイル", "targets", "データ"),
-    Case("cache-part", "キャッシュ", "part_of", "メモリ階層", "CPU", "related_with", "メモリ階層"),
-    Case("heat-causes", "発熱", "causes", "温度上昇", "電圧", "has_property", "温度上昇"),
-    Case("compiler-used-for", "コンパイラ", "used_for", "コード変換", "CPU", "targets", "コード変換"),
+    Case("cache-part", "キャッシュ", "part_of", "メモリ階層", "CPU", "related_with", "ストレージ階層"),
+    Case("heat-causes", "発熱", "causes", "温度上昇", "電圧", "has_property", "温度低下"),
+    Case("compiler-used-for", "コンパイラ", "used_for", "コード変換", "CPU", "targets", "画像生成"),
 ]
 
 
@@ -249,11 +249,33 @@ def print_summary(label, before, after, count):
     print()
 
 
+def validate_cases(label, cases):
+    """Reject degenerate counterfactuals identical to the positive proposition."""
+    for case in cases:
+        positive = (case.subject, case.predicate, case.object)
+        variants = {
+            "subject": (case.subject_cf, case.predicate, case.object),
+            "predicate": (case.subject, case.predicate_cf, case.object),
+            "object": (case.subject, case.predicate, case.object_cf),
+        }
+        for kind, candidate in variants.items():
+            if candidate == positive:
+                raise ValueError(
+                    f"{label}:{case.name} has degenerate {kind} counterfactual "
+                    f"identical to positive: {positive}"
+                )
+
+
 def main():
     if not Path(MODEL).exists():
         raise FileNotFoundError(MODEL)
     if not Path(TOKENIZER).exists():
         raise FileNotFoundError(TOKENIZER)
+
+    validate_cases("TRAIN", TRAIN_CASES)
+    validate_cases("A", HOLDOUT_SEEN_REL)
+    validate_cases("B", HOLDOUT_UNSEEN_REL_SEEN_CONCEPTS)
+    validate_cases("C", HOLDOUT_UNSEEN_REL_UNSEEN_CONCEPTS)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = Tokenizer.load(TOKENIZER)
@@ -268,7 +290,7 @@ def main():
     dim = len(train[0]["s"])
 
     print("=" * 114)
-    print(" LLM_SEM v0.4.3 Relation-Unseen Structural Generalization")
+    print(" LLM_SEM v0.4.3.1 Relation-Unseen Structural Generalization")
     print("=" * 114)
     print("Device                    :", device)
     if device.type == "cuda":
