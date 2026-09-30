@@ -2278,3 +2278,113 @@ RESULT: PASS
 This branch therefore establishes a single runtime path from adaptive semantic
 memory through structured Semantic Data, providing the baseline for the next
 stage: Semantic Composition.
+
+
+## v0.6.2 Semantic Composition Experiment
+
+The next experiment moves from structural-role detection to proposition-level
+semantic composition.
+
+New script:
+
+```powershell
+python run_semantic_composition_v062.py
+```
+
+The experiment compares four composition methods:
+
+```text
+1) simple_mean
+   mean(normalized Subject, Predicate, Object)
+
+2) role_aware
+   frozen v0.4.3 Subject / Predicate / Object role projection
+
+3) relation_weighted
+   frozen role projection with stronger Predicate/Relation contribution
+
+4) learned_comp
+   train-only neural composition head over frozen role-projected vectors
+```
+
+### Evaluation protocol
+
+The existing v0.4.3 splits are reused without modification:
+
+```text
+TRAIN : seen relations / training propositions
+A     : seen relation / unseen proposition
+B     : unseen relation / seen concepts
+C     : unseen relation / unseen concepts
+```
+
+Holdout leakage is explicitly avoided:
+
+```text
+A/B/C in optimization : False
+A/B/C in seed select  : False
+```
+
+The learned composition head is trained only on TRAIN cases. The best seed is
+selected only from TRAIN metrics.
+
+### Main metric
+
+For each proposition, the composed vector is compared with:
+
+```text
+positive proposition
+subject counterfactual
+predicate counterfactual
+object counterfactual
+```
+
+The structural counterfactual margin is:
+
+```text
+margin
+= similarity(composed, positive)
+  - max(similarity(composed, counterfactuals))
+```
+
+Positive margin means the composed semantic representation is closer to the
+correct proposition than to all single-role replacements.
+
+Reported metrics:
+
+```text
+positive-margin cases
+mean margin
+minimum margin
+semantic preservation
+```
+
+A final cross-split table aggregates A/B/C and is intended to distinguish:
+
+```text
+memorized composition
+vs.
+transferable semantic composition
+```
+
+The result is saved to:
+
+```text
+results/semantic_composition_v062.pt
+```
+
+Interpretation:
+
+```text
+TRAIN gain only
+  -> likely proposition-pattern overfitting
+
+A gain
+  -> unseen proposition composition
+
+B gain
+  -> unseen relation transfer
+
+C gain
+  -> strongest evidence for reusable semantic composition
+```
