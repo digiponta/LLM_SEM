@@ -43,6 +43,11 @@ class RuntimeSemanticSignals:
 
     gate_state: Optional[str] = None
     selected_label: Optional[str] = None
+    selected_similarity: Optional[float] = None
+    decision_margin: Optional[float] = None
+
+    candidate_labels: List[str] = field(default_factory=list)
+    candidate_scores: Dict[str, float] = field(default_factory=dict)
 
     confidence: Optional[float] = None
     uncertainty: Optional[float] = None
@@ -97,10 +102,15 @@ def estimate_runtime_uncertainty(
     conf = estimate_runtime_confidence(signals) if confidence is None else confidence
     uncertainty = 1.0 - conf
 
-    if signals.memory_margin is not None:
-        # Small margin means ambiguity. Use a simple bounded penalty without
-        # assuming any particular future calibration method.
-        margin = max(0.0, float(signals.memory_margin))
+    margin_value = (
+        signals.decision_margin
+        if signals.decision_margin is not None
+        else signals.memory_margin
+    )
+    if margin_value is not None:
+        # Small decision margin means ambiguity. Use a simple bounded penalty
+        # without assuming any particular future calibration method.
+        margin = max(0.0, float(margin_value))
         ambiguity = max(0.0, 1.0 - min(1.0, margin / 0.05))
         uncertainty = max(uncertainty, ambiguity)
 
@@ -153,7 +163,19 @@ def runtime_relations(signals: RuntimeSemanticSignals) -> List[SemanticRelation]
                 subject="query",
                 predicate="selected_label",
                 object=signals.selected_label,
-                confidence=estimate_runtime_confidence(signals),
+                confidence=_clamp01(signals.selected_similarity)
+                if signals.selected_similarity is not None
+                else estimate_runtime_confidence(signals),
+            )
+        )
+
+    for label in signals.candidate_labels:
+        relations.append(
+            SemanticRelation(
+                subject="query",
+                predicate="route_candidate",
+                object=label,
+                confidence=_clamp01(signals.candidate_scores.get(label)),
             )
         )
 
@@ -177,6 +199,8 @@ def runtime_context(signals: RuntimeSemanticSignals) -> SemanticContext:
         attrs["gate_state"] = signals.gate_state
     if signals.local_k is not None:
         attrs["local_k"] = str(signals.local_k)
+    if signals.decision_margin is not None:
+        attrs["decision_margin"] = f"{signals.decision_margin:.6f}"
     if signals.adaptive_enabled is not None:
         attrs["adaptive_enabled"] = str(signals.adaptive_enabled)
     if signals.adaptive_samples is not None:
@@ -207,8 +231,8 @@ def build_runtime_semantic_v2(
 
     Existing runtime values become structured fields:
       memory/base/local/prototype -> relations + context
-      selected label              -> concept and relation
-      gate confidence             -> confidence / uncertainty
+      selected label/candidates   -> concepts and relations
+      gate confidence/margin      -> confidence / uncertainty
       query meaning               -> global vector
       task intent                 -> purpose vector
     """
