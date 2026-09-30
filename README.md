@@ -2082,3 +2082,96 @@ Results are saved to:
 ```text
 results/role_ablation_v044.pt
 ```
+
+
+## v0.4.5 Role Interaction / Synergy Analysis
+
+v0.4.5 evaluates interaction effects among Subject, Predicate, and Object
+pathways using the fixed v0.4.3 projection checkpoint.
+
+New script:
+
+```powershell
+python run_role_synergy_v045.py
+```
+
+No retraining is performed.
+
+The following seven non-empty role combinations are compared:
+
+```text
+Subject only
+Predicate only
+Object only
+
+Subject + Predicate
+Subject + Object
+Predicate + Object
+
+Subject + Predicate + Object
+```
+
+The same three holdout splits are used:
+
+```text
+A) Seen relation / unseen proposition
+B) Unseen relation / seen concepts
+C) Unseen relation / unseen concepts
+```
+
+### Pair synergy
+
+For a role pair A+B:
+
+```text
+pair_synergy(A,B)
+= margin(A+B) - max(margin(A), margin(B))
+```
+
+Positive pair synergy means the combination provides more structural margin
+than either constituent role alone.
+
+### Triple synergy
+
+For the Full model:
+
+```text
+triple_synergy
+= margin(Subject+Predicate+Object)
+  - max(
+      margin(Subject+Predicate),
+      margin(Subject+Object),
+      margin(Predicate+Object)
+    )
+```
+
+Positive triple synergy means all three roles together outperform every
+two-role configuration.
+
+### Output
+
+For every split the script reports:
+
+```text
+Positive-margin cases
+Mean structural margin
+Minimum margin
+Mean semantic preservation
+```
+
+for all seven variants, followed by:
+
+```text
+Subject + Predicate synergy
+Subject + Object synergy
+Predicate + Object synergy
+Triple synergy
+```
+
+A final cross-split table reports the mean synergy across A/B/C.
+
+Results are saved to:
+
+```text
+results/role_synergy_v045.pt
+```
