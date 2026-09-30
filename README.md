@@ -1541,3 +1541,102 @@ Expected result:
 ```text
 Result: 3/3 passed
 ```
+
+
+## v0.3.9 Proposition Vector / Relation Vector
+
+The v0.4 branch now extends Semantic Data v2.0 so that structural relations
+and proposition nodes carry their own semantic vectors.
+
+The representation now includes:
+
+```text
+Global Vector
+Concept Vectors[]
+Purpose Vector
+Relation Vectors[]
+Proposition Vectors[]
+Context
+Confidence / Uncertainty
+```
+
+### Relation vectors
+
+Every SemanticRelation is now encoded from its canonical textual form:
+
+```text
+subject predicate object
+```
+
+Example:
+
+```text
+GPU has_property 高速
+```
+
+This produces a relation vector using the same frozen LLM_SEM encoder as the
+global, concept, and purpose vectors.
+
+### Proposition vectors
+
+A proposition node now has an explicit vectorized representation:
+
+```text
+proposition_1
+  subject   = GPU
+  predicate = has_property
+  object    = 高速
+  vector    = SemanticVector(...)
+```
+
+The proposition vector is encoded from:
+
+```text
+GPU has_property 高速
+```
+
+The structural graph and the vector representation therefore coexist:
+
+```text
+query --requests_reason_for--> proposition_1
+proposition_1 --subject--> GPU
+proposition_1 --predicate--> has_property
+proposition_1 --object--> 高速
+GPU --has_property--> 高速
+```
+
+### chat.py output
+
+The chat runtime now displays vector dimensions for both relation and
+proposition vectors:
+
+```text
+V2> relations:
+    GPU --has_property--> 高速 [0.920] vec=64
+
+V2> propositions:
+    proposition_1: GPU --has_property--> 高速 vec=64
+```
+
+### Regression
+
+Run:
+
+```powershell
+python run_semantic_vector_regression_v039.py
+```
+
+Expected:
+
+```text
+[PASS] global-vector
+[PASS] concept-vectors
+[PASS] purpose-vector
+[PASS] relation-vectors
+[PASS] proposition-vector
+Result: 5/5 passed
+```
+
+This is the first Semantic Data v2.0 stage where topic, concepts, purpose,
+relations, and propositions are all represented independently in vector space
+while remaining connected through the semantic graph.
