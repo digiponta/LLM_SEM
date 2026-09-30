@@ -369,6 +369,38 @@ def encode_semantic_v2(
         proposition_source = f"{subject} {predicate} {object_text}".strip()
         if not proposition_source:
             continue
+        precomputed_vector = spec.get("vector")
+        vector_role = str(spec.get("vector_role", "proposition"))
+        if isinstance(precomputed_vector, (list, tuple)) and precomputed_vector:
+            vector = SemanticVector(
+                vector=[float(x) for x in precomputed_vector],
+                dimension=len(precomputed_vector),
+                source_text=proposition_source,
+                role=vector_role,
+                model_type="adaptive-composition",
+                pooling="role-weighted",
+                confidence=(
+                    float(prop_conf)
+                    if isinstance(prop_conf, (int, float))
+                    else None
+                ),
+            )
+        else:
+            vector = _encode_named_vector(
+                model,
+                tokenizer,
+                proposition_source,
+                role="proposition",
+                pooling=pooling,
+                hybrid_alpha=hybrid_alpha,
+                normalize_hybrid=normalize_hybrid,
+                confidence=(
+                    float(prop_conf)
+                    if isinstance(prop_conf, (int, float))
+                    else None
+                ),
+            )
+
         proposition_vectors.append(
             SemanticProposition(
                 proposition_id=proposition_id,
@@ -381,20 +413,7 @@ def encode_semantic_v2(
                     else None
                 ),
                 attributes=attributes,
-                vector=_encode_named_vector(
-                    model,
-                    tokenizer,
-                    proposition_source,
-                    role="proposition",
-                    pooling=pooling,
-                    hybrid_alpha=hybrid_alpha,
-                    normalize_hybrid=normalize_hybrid,
-                    confidence=(
-                        float(prop_conf)
-                        if isinstance(prop_conf, (int, float))
-                        else None
-                    ),
-                ),
+                vector=vector,
             )
         )
 
