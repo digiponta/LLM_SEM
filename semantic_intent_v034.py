@@ -35,7 +35,21 @@ def extract_purpose_intent(text: str) -> PurposeIntentResult:
     if not original:
         raise ValueError("text must not be empty")
 
+    # Evaluate specific intents before generic explanation patterns.
+    # Otherwise "Pythonの使い方を教えて" is consumed by the generic
+    # "...を教えて" explanation rule.
     rules = [
+        (
+            "how_to",
+            re.compile(
+                r"^(?P<concept>.+?)(?:の)?"
+                r"(?:方法|やり方|使い方|仕方)"
+                r"(?:を)?(?:教えて|説明して|説明してください|知りたい)[。]*$"
+            ),
+            lambda c: f"how_to({c})",
+            "how-to-pattern",
+            0.95,
+        ),
         (
             "definition",
             re.compile(r"^(?P<concept>.+?)(?:とは|って何|とは何|とは何ですか)[？?。]*$"),
@@ -44,32 +58,36 @@ def extract_purpose_intent(text: str) -> PurposeIntentResult:
             0.95,
         ),
         (
+            "why",
+            re.compile(
+                r"^(?:(?:なぜ|どうして)(?P<concept_prefix>.+?)|"
+                r"(?P<concept_suffix>.+?)(?:は)?(?:なぜ|どうして))"
+                r"(?:ですか)?[？?。]*$"
+            ),
+            lambda c: f"explain_reason({c})",
+            "why-pattern",
+            0.90,
+        ),
+        (
             "explain",
             re.compile(r"^(?P<concept>.+?)(?:について)?(?:教えて|説明して|説明してください)[。]*$"),
             lambda c: f"explain({c})",
             "explain-pattern",
             0.90,
         ),
-        (
-            "how_to",
-            re.compile(r"^(?P<concept>.+?)(?:方法|やり方|使い方|仕方)(?:を)?(?:教えて|説明して|知りたい)[。]*$"),
-            lambda c: f"how_to({c})",
-            "how-to-pattern",
-            0.90,
-        ),
-        (
-            "why",
-            re.compile(r"^(?P<concept>.+?)(?:なぜ|どうして)(?:ですか)?[？?。]*$"),
-            lambda c: f"explain_reason({c})",
-            "why-pattern",
-            0.85,
-        ),
     ]
 
     for intent, pattern, purpose_fn, rule, confidence in rules:
         m = pattern.match(original)
         if m:
-            concept = _clean_concept(m.group("concept"))
+            groupdict = m.groupdict()
+            concept_raw = (
+                groupdict.get("concept")
+                or groupdict.get("concept_prefix")
+                or groupdict.get("concept_suffix")
+                or ""
+            )
+            concept = _clean_concept(concept_raw)
             if concept:
                 return PurposeIntentResult(
                     concept_texts=[concept],
