@@ -147,3 +147,25 @@ def proposition_concepts(
             concepts.append(proposition.object)
 
     return list(dict.fromkeys(concepts or original_concepts))
+
+
+def proposition_specs(
+    propositions: List[Proposition],
+) -> List[dict[str, object]]:
+    """Convert extracted propositions into SemanticDataV2 vector specs."""
+    specs: List[dict[str, object]] = []
+    for index, proposition in enumerate(propositions, 1):
+        specs.append(
+            {
+                "proposition_id": f"proposition_{index}",
+                "subject": proposition.subject,
+                "predicate": proposition.predicate,
+                "object": proposition.object,
+                "confidence": proposition.confidence,
+                "attributes": {
+                    "particle": proposition.particle,
+                    "rule": proposition.rule,
+                },
+            }
+        )
+    return specs
