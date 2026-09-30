@@ -23,6 +23,13 @@ def _clean(text: str) -> str:
     return " ".join(text.strip().split())
 
 
+def _clean_concept(text: str) -> str:
+    concept = _clean(text)
+    if concept.endswith("の") and len(concept) > 1:
+        concept = concept[:-1]
+    return concept
+
+
 def extract_purpose_intent(text: str) -> PurposeIntentResult:
     original = _clean(text)
     if not original:
@@ -45,7 +52,7 @@ def extract_purpose_intent(text: str) -> PurposeIntentResult:
         ),
         (
             "how_to",
-            re.compile(r"^(?P<concept>.+?)(?:方法|やり方|仕方)(?:を)?(?:教えて|説明して|知りたい)[。]*$"),
+            re.compile(r"^(?P<concept>.+?)(?:方法|やり方|使い方|仕方)(?:を)?(?:教えて|説明して|知りたい)[。]*$"),
             lambda c: f"how_to({c})",
             "how-to-pattern",
             0.90,
@@ -62,7 +69,7 @@ def extract_purpose_intent(text: str) -> PurposeIntentResult:
     for intent, pattern, purpose_fn, rule, confidence in rules:
         m = pattern.match(original)
         if m:
-            concept = _clean(m.group("concept"))
+            concept = _clean_concept(m.group("concept"))
             if concept:
                 return PurposeIntentResult(
                     concept_texts=[concept],
@@ -81,7 +88,7 @@ def extract_purpose_intent(text: str) -> PurposeIntentResult:
     ]
     for intent, suffix, purpose_name, confidence in suffix_rules:
         if original.endswith(suffix):
-            concept = _clean(original[: -len(suffix)])
+            concept = _clean_concept(original[: -len(suffix)])
             if concept:
                 return PurposeIntentResult(
                     concept_texts=[concept],
