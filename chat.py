@@ -1,9 +1,11 @@
 # chat.py
 #
-# LLM_SEM v0.3 Adaptive Semantic Learning interactive shell.
+# LLM_SEM v0.3 Adaptive Semantic Learning interactive shell
+# with native Semantic Data v2.0 generation.
 #
 # The base Transformer remains frozen. New semantic examples are stored in a
-# persistent JSONL memory and centroids are immediately refit.
+# persistent JSONL memory and centroids are immediately refit. Every normal
+# user query is also converted into SemanticDataV2 and summarized on screen.
 
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ import torch
 
 from adaptive_semantic_learning import (
     append_semantic_memory,
+    exact_memory_label,
     load_semantic_memory,
     merge_samples,
 )
@@ -23,6 +26,7 @@ from semantic_router import (
     SemanticRouter,
     get_policy_thresholds,
 )
+from semantic_runtime_v2 import from_runtime_dict, runtime_summary
 from tokenizer import Tokenizer
 
 
@@ -36,17 +40,33 @@ DEFAULT_POLICY = "balanced"
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.3 Adaptive Semantic Learning shell."
+        description=(
+            "LLM_SEM v0.3 Adaptive Semantic Learning shell "
+            "with Semantic Data v2.0 runtime integration."
+        )
     )
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     p.add_argument("--benchmark", default=DEFAULT_BENCHMARK)
     p.add_argument("--unknown-benchmark", default=DEFAULT_UNKNOWN_BENCHMARK)
     p.add_argument("--memory", default=DEFAULT_MEMORY)
-    p.add_argument("--policy", default=DEFAULT_POLICY,
-                   choices=["known-first", "balanced", "discovery-first"])
+    p.add_argument(
+        "--policy",
+        default=DEFAULT_POLICY,
+        choices=["known-first", "balanced", "discovery-first"],
+    )
     p.add_argument("--alpha", type=float, default=0.35)
-    p.add_argument("--learn", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument(
+        "--learn",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    p.add_argument(
+        "--semantic-v2",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Automatically generate/display SemanticDataV2 for normal queries.",
+    )
     return p.parse_args()
 
 
@@ -63,6 +83,50 @@ def classify_gate(ranked, thresholds):
     if margin < margin_th:
         return "GATE_REVIEW", top1, margin
     return "ACCEPT", top1, margin
+
+
+def print_semantic_v2(summary: dict[str, object]) -> None:
+    """Print a compact SemanticDataV2 runtime view."""
+    confidence = summary.get("confidence")
+    uncertainty = summary.get("uncertainty")
+    concepts = summary.get("concepts") or []
+    purpose = summary.get("purpose")
+    intent = summary.get("intent")
+    context = summary.get("context") or {}
+
+    conf_text = (
+        f"{float(confidence):.6f}"
+        if isinstance(confidence, (int, float))
+        else "n/a"
+    )
+    unc_text = (
+        f"{float(uncertainty):.6f}"
+        if isinstance(uncertainty, (int, float))
+        else "n/a"
+    )
+
+    print(
+        f"V2> schema={summary.get('schema_version')} "
+        f"confidence={conf_text} uncertainty={unc_text}"
+    )
+    print(
+        "V2> concepts="
+        + (", ".join(str(x) for x in concepts) if concepts else "(none)")
+    )
+    print(
+        f"V2> purpose={purpose!r}"
+        + (f" intent={intent}" if intent else "")
+    )
+
+    gate_state = context.get("gate_state") if isinstance(context, dict) else None
+    decision_margin = (
+        context.get("decision_margin") if isinstance(context, dict) else None
+    )
+    if gate_state is not None or decision_margin is not None:
+        print(
+            f"V2> context gate={gate_state or 'n/a'} "
+            f"decision_margin={decision_margin or 'n/a'}"
+        )
 
 
 def main() -> None:
@@ -85,7 +149,9 @@ def main() -> None:
     unknown_samples = load_benchmark(args.unknown_benchmark)
     memory_path = Path(args.memory)
     learning_enabled = bool(args.learn)
+    semantic_v2_enabled = bool(args.semantic_v2)
     last_text: str | None = None
+    last_semantic_v2 = None
 
     router = SemanticRouter(model, tokenizer, alpha=args.alpha)
 
@@ -105,7 +171,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.3 Adaptive Semantic Learning")
+    print(" LLM_SEM v0.3 Adaptive Semantic Learning + Semantic Data v2")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -115,9 +181,11 @@ def main() -> None:
     print("Base samples    :", len(base_samples))
     print("Adaptive samples:", len(adaptive))
     print("Learning        :", "ON" if learning_enabled else "OFF")
+    print("Semantic Data v2:", "ON" if semantic_v2_enabled else "OFF")
     print()
     print("Commands:")
     print("  /learn on|off|status")
+    print("  /semantic on|off|status")
     print("  /teach <label>       teach the previous user utterance")
     print("  /memory               show adaptive sample count")
     print("  /quit")
@@ -145,9 +213,31 @@ def main() -> None:
                 print("Usage: /learn on|off|status")
             continue
 
+        if text.startswith("/semantic"):
+            parts = text.split()
+            if len(parts) == 1 or parts[1] == "status":
+                print(
+                    "Semantic Data v2:",
+                    "ON" if semantic_v2_enabled else "OFF",
+                )
+            elif parts[1] == "on":
+                semantic_v2_enabled = True
+                print("Semantic Data v2: ON")
+            elif parts[1] == "off":
+                semantic_v2_enabled = False
+                print("Semantic Data v2: OFF")
+            else:
+                print("Usage: /semantic on|off|status")
+            continue
+
         if text == "/memory":
             adaptive = load_semantic_memory(memory_path)
+            labels = sorted({row.label for row in adaptive})
             print(f"Adaptive samples: {len(adaptive)} -> {memory_path}")
+            print(
+                "Adaptive labels :",
+                ", ".join(labels) if labels else "(none)",
+            )
             continue
 
         if text.startswith("/teach"):
@@ -187,6 +277,49 @@ def main() -> None:
             f"SEM> {gate}  label={top1.label} "
             f"sim={top1.similarity:.6f} margin={margin:.6f}"
         )
+
+        if semantic_v2_enabled:
+            adaptive = load_semantic_memory(memory_path)
+            taught_label = exact_memory_label(memory_path, text)
+            candidate_rows = ranked[: min(3, len(ranked))]
+            candidate_labels = [row.label for row in candidate_rows]
+            candidate_scores = {
+                row.label: float(row.similarity)
+                for row in candidate_rows
+            }
+
+            runtime = {
+                "memory_label": taught_label,
+                "memory_similarity": 1.0 if taught_label is not None else None,
+                "gate_state": gate,
+                "selected_label": top1.label,
+                "selected_similarity": float(top1.similarity),
+                "decision_margin": float(margin),
+                "candidate_labels": candidate_labels,
+                "candidate_scores": candidate_scores,
+                # Cosine similarity is used only as a runtime heuristic here,
+                # not as a calibrated probability.
+                "confidence": float(top1.similarity),
+                "adaptive_enabled": learning_enabled,
+                "adaptive_samples": len(adaptive),
+                "memory_labels": len({row.label for row in adaptive}),
+                "metadata": {
+                    "runtime": "v0.3-chat-native",
+                    "router": "adaptive-centroid",
+                    "policy": args.policy,
+                },
+            }
+
+            last_semantic_v2 = from_runtime_dict(
+                model,
+                tokenizer,
+                text,
+                runtime,
+                concept_texts=[top1.label],
+                purpose_text=text,
+                intent=None,
+            )
+            print_semantic_v2(runtime_summary(last_semantic_v2))
 
         if gate == "UNKNOWN_KNOWLEDGE":
             print("SEM> Unknown semantic region. Teach with: /teach <label>")
