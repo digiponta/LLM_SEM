@@ -1217,3 +1217,106 @@ User Input
 v0.3.4 intentionally uses transparent rules rather than a learned intent head.
 This provides a reproducible baseline for later comparison with learned
 purpose/intent extraction.
+
+
+## v0.3.5 Automatic Relation Generation
+
+The `v0.3` branch now generates explicit semantic relations automatically
+from the Concept / Intent / Purpose structure produced by v0.3.4.
+
+New file:
+
+```text
+semantic_relations_v035.py
+```
+
+The relation generator currently maps intents as follows:
+
+```text
+definition  -> query --requests_definition_of--> concept
+explain     -> query --requests_explanation_of--> concept
+how_to      -> query --requests_how_to_for--> concept
+why         -> query --requests_reason_for--> concept
+query       -> query --requests_information_about--> concept
+unspecified -> query --mentions--> concept
+```
+
+It also emits purpose bindings:
+
+```text
+query --has_purpose--> purpose
+purpose --targets_concept--> concept
+```
+
+Example:
+
+```text
+Input   : CPUとは
+Concept : CPU
+Intent  : definition
+Purpose : explain_definition(CPU)
+
+Generated relations:
+
+query --requests_definition_of--> CPU
+query --has_purpose--> explain_definition(CPU)
+explain_definition(CPU) --targets_concept--> CPU
+```
+
+These semantic relations are merged with the existing runtime/provenance
+relations:
+
+```text
+query --selected_label--> computer
+query --base_candidate--> computer
+query --route_candidate--> computer
+...
+```
+
+The two relation families remain conceptually distinct:
+
+```text
+semantic relations  = what the user means/wants
+runtime relations   = how the router/memory system decided
+```
+
+### Concept / routing-evidence separation
+
+v0.3.5 also removes routing labels from `Concept Vectors[]`.
+
+Before:
+
+```text
+V2> concepts=暗号, science, animal
+```
+
+After:
+
+```text
+V2> concepts=暗号
+```
+
+Routing labels are retained in `relations[]` and `context` instead of being
+misclassified as semantic concepts.
+
+This produces a cleaner structure:
+
+```text
+SemanticDataV2
+  |
+  +-- Concept Vectors[]       semantic concepts only
+  +-- Purpose / Intent        requested action
+  +-- Semantic Relations[]    meaning structure
+  +-- Runtime Relations[]     routing / memory provenance
+  +-- Context                 gate / thresholds / runtime state
+```
+
+The chat runtime prints all relations with their confidence values.
+
+A small regression test is included:
+
+```powershell
+python run_semantic_relations_regression_v035.py
+```
+
+It covers definition, explanation, how-to, and fallback relation generation.
