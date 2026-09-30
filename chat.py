@@ -1,11 +1,10 @@
 # chat.py
 #
-# LLM_SEM v0.3 Adaptive Semantic Learning interactive shell
-# with native Semantic Data v2.0 generation.
+# LLM_SEM v0.6.1 Unified Semantic Runtime
 #
-# The base Transformer remains frozen. New semantic examples are stored in a
-# persistent JSONL memory and centroids are immediately refit. Every normal
-# user query is also converted into SemanticDataV2 and summarized on screen.
+# Integrates adaptive learning, Semantic Data v2.0, structural
+# relation/proposition extraction, and the v0.4.6 local-evidence
+# multi-prototype runtime. The base Transformer remains frozen.
 
 from __future__ import annotations
 
@@ -20,6 +19,11 @@ from adaptive_semantic_learning import (
     exact_memory_label,
     load_semantic_memory,
     merge_samples,
+)
+from adaptive_semantic_runtime import (
+    build_multi_prototypes,
+    decide_adaptive_route,
+    encode_memory,
 )
 from model import LanguageModel
 from semantic_eval import load_benchmark
@@ -64,8 +68,9 @@ class TeachingSnapshot:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
-            "LLM_SEM v0.3 Adaptive Semantic Learning shell "
-            "with Semantic Data v2.0 runtime integration."
+            "LLM_SEM v0.6.1 Unified Semantic Runtime: adaptive memory, "
+            "Semantic Data v2.0, structural relations/propositions, and "
+            "local-evidence routing."
         )
     )
     p.add_argument("--model", default=DEFAULT_MODEL)
@@ -79,6 +84,11 @@ def parse_args() -> argparse.Namespace:
         choices=["known-first", "balanced", "discovery-first"],
     )
     p.add_argument("--alpha", type=float, default=0.35)
+    p.add_argument("--prototypes-per-label", type=int, default=2)
+    p.add_argument("--local-k", type=int, default=3)
+    p.add_argument("--local-purity", type=float, default=0.60)
+    p.add_argument("--memory-sim", type=float, default=0.80)
+    p.add_argument("--override-sim", type=float, default=0.92)
     p.add_argument(
         "--learn",
         action=argparse.BooleanOptionalAction,
@@ -121,6 +131,53 @@ def gate_reason(gate: str, top1_similarity: float, margin: float, thresholds) ->
     return (
         f"similarity {top1_similarity:.6f} >= {sim_th:.6f} and "
         f"margin {margin:.6f} >= {margin_th:.6f}"
+    )
+
+
+def evaluate_local_runtime(
+    base_router,
+    adaptive_samples,
+    text: str,
+    args: argparse.Namespace,
+):
+    """Evaluate v0.4.6 local-evidence adaptive routing without retraining base."""
+    if not adaptive_samples:
+        return None
+
+    memory = encode_memory(base_router, adaptive_samples)
+    prototypes = build_multi_prototypes(
+        memory,
+        per_label=max(1, int(args.prototypes_per_label)),
+    )
+    return decide_adaptive_route(
+        base_router,
+        text,
+        memory,
+        prototypes,
+        base_similarity_threshold=float(args.memory_sim),
+        override_similarity_threshold=float(args.override_sim),
+        local_k=max(1, int(args.local_k)),
+        local_purity_threshold=float(args.local_purity),
+    )
+
+
+def print_local_runtime(decision) -> None:
+    if decision is None:
+        print("LOC> adaptive memory unavailable")
+        return
+    margin = (
+        f"{decision.memory_margin:.6f}"
+        if decision.memory_margin is not None
+        else "n/a"
+    )
+    print(
+        f"LOC> action={decision.action} label={decision.label} "
+        f"sim={decision.memory_similarity:.6f} margin={margin}"
+    )
+    print(
+        f"LOC> majority={decision.local_majority_label or '(none)'} "
+        f"purity={decision.local_purity:.3f} k={decision.local_k} "
+        f"base={decision.base_label} ({decision.base_similarity:.6f})"
     )
 
 
@@ -399,7 +456,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.3.9 Proposition / Relation Vector")
+    print(" LLM_SEM v0.6.1 Unified Semantic Runtime")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -410,12 +467,19 @@ def main() -> None:
     print("Adaptive samples:", len(adaptive))
     print("Learning        :", "ON" if learning_enabled else "OFF")
     print("Semantic Data v2:", "ON" if semantic_v2_enabled else "OFF")
+    print("Local evidence   : ON")
+    print("Prototypes/label :", args.prototypes_per_label)
+    print("Local k          :", args.local_k)
+    print("Local purity     :", args.local_purity)
+    print("Memory sim       :", args.memory_sim)
+    print("Override sim     :", args.override_sim)
     print()
     print("Commands:")
     print("  /learn on|off|status")
     print("  /semantic on|off|status")
     print("  /teach <label>       teach the previous user utterance")
     print("  /memory               show adaptive sample count")
+    print("  /runtime              show v0.6.1 runtime policy")
     print("  /quit")
     print()
 
@@ -465,6 +529,19 @@ def main() -> None:
             print(
                 "Adaptive labels :",
                 ", ".join(labels) if labels else "(none)",
+            )
+            continue
+
+        if text == "/runtime":
+            print("Runtime        : LLM_SEM v0.6.1 Unified Semantic Runtime")
+            print("Base router    : FIXED benchmark router")
+            print("Adaptive memory: multi-prototype + local evidence")
+            print("Semantic data  : v2.0")
+            print("Structure      : relation + proposition vectors")
+            print(
+                "Policy         : "
+                f"mem>={args.memory_sim:.2f}, override>={args.override_sim:.2f}, "
+                f"k={args.local_k}, purity>={args.local_purity:.2f}"
             )
             continue
 
@@ -617,10 +694,27 @@ def main() -> None:
         margin = last_snapshot.margin
         base_top1 = base_ranked[0]
 
+        adaptive = load_semantic_memory(memory_path)
+        local_decision = evaluate_local_runtime(
+            base_router,
+            adaptive,
+            text,
+            args,
+        )
+        if (
+            gate != "ACCEPT_MEMORY"
+            and local_decision is not None
+            and local_decision.action == "ADAPTIVE_OVERRIDE"
+        ):
+            gate = "ACCEPT_ADAPTIVE"
+            last_snapshot.selected_label = local_decision.label
+            last_snapshot.similarity = local_decision.memory_similarity
+
         print(
             f"SEM> {gate}  label={last_snapshot.selected_label} "
             f"sim={last_snapshot.similarity:.6f} margin={margin:.6f}"
         )
+        print_local_runtime(local_decision)
 
         if semantic_v2_enabled:
             extracted = extract_purpose_intent(text)
@@ -679,20 +773,35 @@ def main() -> None:
                 "adaptive_samples": len(adaptive),
                 "memory_labels": len({row.label for row in adaptive}),
                 "metadata": {
-                    "runtime": "v0.3.7-chat-native",
-                    "router": "adaptive-centroid",
+                    "runtime": "v0.6.1-unified",
+                    "router": "base-fixed + adaptive-local-evidence",
                     "policy": args.policy,
                     "intent_rule": extracted.rule,
                 },
                 "extraction_rule": extracted.rule,
                 "extraction_confidence": extracted.confidence,
-                "gate_reason": gate_reason(
-                    gate,
-                    last_snapshot.similarity,
-                    float(margin),
-                    thresholds,
+                "gate_reason": (
+                    "local evidence accepted adaptive override"
+                    if gate == "ACCEPT_ADAPTIVE"
+                    else gate_reason(
+                        gate,
+                        last_snapshot.similarity,
+                        float(margin),
+                        thresholds,
+                    )
                 ),
             }
+            if local_decision is not None:
+                runtime["metadata"].update(
+                    {
+                        "local_action": local_decision.action,
+                        "local_majority": local_decision.local_majority_label,
+                        "local_purity": local_decision.local_purity,
+                        "local_k": local_decision.local_k,
+                        "memory_similarity": local_decision.memory_similarity,
+                        "memory_margin": local_decision.memory_margin,
+                    }
+                )
 
             last_semantic_v2 = from_runtime_dict(
                 model,
@@ -717,6 +826,11 @@ def main() -> None:
                     "SEM> Base/memory disagreement detected; "
                     "review is recommended."
                 )
+        elif gate == "ACCEPT_ADAPTIVE":
+            print(
+                "SEM> Accepted by local-evidence adaptive override: "
+                f"{last_snapshot.selected_label}"
+            )
         elif gate == "UNKNOWN_KNOWLEDGE":
             print("SEM> Unknown semantic region. Teach with: /teach <label>")
         elif gate == "GATE_REVIEW":
