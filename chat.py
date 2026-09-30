@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.6.1 Unified Semantic Runtime
+# LLM_SEM v0.6.5 Unified Semantic Runtime
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -73,7 +73,7 @@ class TeachingSnapshot:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
-            "LLM_SEM v0.6.1 Unified Semantic Runtime: adaptive memory, "
+            "LLM_SEM v0.6.5 Unified Semantic Runtime: adaptive memory, "
             "Semantic Data v2.0, structural relations/propositions, and "
             "local-evidence routing."
         )
@@ -520,7 +520,7 @@ def main() -> None:
     print("  /semantic on|off|status")
     print("  /teach <label>       teach the previous user utterance")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.6.1 runtime policy")
+    print("  /runtime              show v0.6.5 runtime policy")
     print("  /quit")
     print()
 
