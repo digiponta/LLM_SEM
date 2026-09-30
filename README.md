@@ -2388,3 +2388,89 @@ B gain
 C gain
   -> strongest evidence for reusable semantic composition
 ```
+
+
+## v0.6.3 Adaptive Semantic Composition Gate
+
+v0.6.3 tests whether proposition composition should change according to
+semantic novelty instead of using one fixed Subject / Predicate / Object
+weighting for every input.
+
+New script:
+
+```powershell
+python run_adaptive_semantic_composition_v063.py
+```
+
+The experiment is an exploratory follow-up to v0.6.2.
+
+### Fixed composition modes
+
+```text
+balanced
+  S=0.333  P=0.333  O=0.333
+
+relation_aware
+  S=0.25   P=0.50   O=0.25
+
+concept_aware
+  S=0.40   P=0.20   O=0.40
+```
+
+### Adaptive gate
+
+The gate uses only novelty relative to TRAIN_CASES:
+
+```text
+known relation
+  -> balanced
+
+unseen relation + subject/object both seen in TRAIN
+  -> relation_aware
+
+unseen relation + at least one novel concept
+  -> balanced
+```
+
+The gate does not inspect holdout margins, positive vectors, or
+counterfactual scores when selecting a mode.
+
+Compared methods:
+
+```text
+simple_mean
+balanced
+relation_aware
+concept_aware
+adaptive_gate
+```
+
+The same A/B/C holdouts are retained.
+
+For every adaptive decision the script prints:
+
+```text
+relation seen/unseen
+subject seen/unseen
+object seen/unseen
+selected composition mode
+decision reason
+```
+
+Results are saved to:
+
+```text
+results/adaptive_semantic_composition_v063.pt
+```
+
+### Scientific status
+
+This experiment is explicitly marked:
+
+```text
+exploratory / post-hoc
+```
+
+because its rule is motivated by the v0.6.2 observations. If the adaptive gate
+improves the existing holdout result, a new independently designed holdout set
+will be required for confirmatory evaluation.
