@@ -1640,3 +1640,75 @@ Result: 5/5 passed
 This is the first Semantic Data v2.0 stage where topic, concepts, purpose,
 relations, and propositions are all represented independently in vector space
 while remaining connected through the semantic graph.
+
+
+## v0.4.0 Semantic Structural Consistency Evaluation
+
+The v0.4 branch now includes a structural consistency experiment for the
+Semantic Data v2.0 proposition representation.
+
+New script:
+
+```powershell
+python run_semantic_structural_consistency_v040.py
+```
+
+The experiment asks whether an independently composed semantic vector built
+from:
+
+```text
+Subject Vector
+Predicate Vector
+Object Vector
+```
+
+is closer to the correct proposition vector than to counterfactual
+propositions in which one structural element is replaced.
+
+For example:
+
+```text
+Positive:
+GPU --has_property--> 高速
+
+Counterfactual subject:
+CPU --has_property--> 高速
+
+Counterfactual predicate:
+GPU --has_predicate--> 高速
+
+Counterfactual object:
+GPU --has_property--> 低速
+```
+
+For each case the script reports:
+
+```text
+Positive similarity
+Counterfactual subject similarity
+Counterfactual predicate similarity
+Counterfactual object similarity
+Best counterfactual similarity
+Structural margin
+PASS / FAIL
+```
+
+The structural margin is:
+
+```text
+positive_similarity - max(counterfactual_similarities)
+```
+
+A positive margin means the frozen semantic encoder preserves enough
+structure for the correct proposition to be more compatible with the
+independently encoded subject/predicate/object components than all tested
+one-element counterfactuals.
+
+The script also prints component-alignment diagnostics for Subject,
+Predicate, and Object versus the positive proposition vector.
+
+This experiment is diagnostic. Similarity values are not calibrated
+probabilities, and a PASS does not imply logical correctness. The goal is to
+measure whether structural distinctions are present in the current frozen
+semantic space strongly enough to support future proposition-aware routing,
+gating, or projection learning.
