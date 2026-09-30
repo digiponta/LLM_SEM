@@ -38,31 +38,115 @@ def generate_semantic_relations(
     }
     predicate = predicate_map.get(extracted.intent, "mentions")
 
-    for concept in effective_concepts:
-        relations.append(
-            SemanticRelation(
-                subject="query",
-                predicate=predicate,
-                object=concept,
-                confidence=extracted.confidence,
-                attributes={
-                    "intent": extracted.intent,
-                    "rule": extracted.rule,
-                },
-            )
-        )
+    proposition_list = propositions or []
 
-        relations.append(
-            SemanticRelation(
-                subject=effective_purpose,
-                predicate="targets_concept",
-                object=concept,
-                confidence=extracted.confidence,
-                attributes={
-                    "intent": extracted.intent,
-                },
+    if proposition_list:
+        # Bind query intent to proposition nodes rather than independently to
+        # every concept. This preserves the fact that, e.g., a "why" query is
+        # about the whole statement "GPU is fast", not GPU and "fast" as two
+        # unrelated request targets.
+        for index, proposition in enumerate(proposition_list, 1):
+            proposition_id = f"proposition_{index}"
+
+            query_predicate = (
+                "asserts"
+                if extracted.intent == "unspecified"
+                else predicate
             )
-        )
+            relations.append(
+                SemanticRelation(
+                    subject="query",
+                    predicate=query_predicate,
+                    object=proposition_id,
+                    confidence=extracted.confidence,
+                    attributes={
+                        "intent": extracted.intent,
+                        "rule": extracted.rule,
+                        "relation_family": "query_proposition_binding",
+                    },
+                )
+            )
+
+            relations.append(
+                SemanticRelation(
+                    subject=effective_purpose,
+                    predicate="targets_proposition",
+                    object=proposition_id,
+                    confidence=extracted.confidence,
+                    attributes={
+                        "intent": extracted.intent,
+                    },
+                )
+            )
+
+            relations.append(
+                SemanticRelation(
+                    subject=proposition_id,
+                    predicate="subject",
+                    object=proposition.subject,
+                    confidence=proposition.confidence,
+                    attributes={"relation_family": "proposition_binding"},
+                )
+            )
+            relations.append(
+                SemanticRelation(
+                    subject=proposition_id,
+                    predicate="predicate",
+                    object=proposition.predicate,
+                    confidence=proposition.confidence,
+                    attributes={"relation_family": "proposition_binding"},
+                )
+            )
+            relations.append(
+                SemanticRelation(
+                    subject=proposition_id,
+                    predicate="object",
+                    object=proposition.object,
+                    confidence=proposition.confidence,
+                    attributes={"relation_family": "proposition_binding"},
+                )
+            )
+
+            relations.append(
+                SemanticRelation(
+                    subject=proposition.subject,
+                    predicate=proposition.predicate,
+                    object=proposition.object,
+                    confidence=proposition.confidence,
+                    attributes={
+                        "particle": proposition.particle,
+                        "rule": proposition.rule,
+                        "relation_family": "proposition",
+                        "proposition_id": proposition_id,
+                    },
+                )
+            )
+    else:
+        for concept in effective_concepts:
+            relations.append(
+                SemanticRelation(
+                    subject="query",
+                    predicate=predicate,
+                    object=concept,
+                    confidence=extracted.confidence,
+                    attributes={
+                        "intent": extracted.intent,
+                        "rule": extracted.rule,
+                    },
+                )
+            )
+
+            relations.append(
+                SemanticRelation(
+                    subject=effective_purpose,
+                    predicate="targets_concept",
+                    object=concept,
+                    confidence=extracted.confidence,
+                    attributes={
+                        "intent": extracted.intent,
+                    },
+                )
+            )
 
     relations.append(
         SemanticRelation(
@@ -76,20 +160,5 @@ def generate_semantic_relations(
             },
         )
     )
-
-    for proposition in propositions or []:
-        relations.append(
-            SemanticRelation(
-                subject=proposition.subject,
-                predicate=proposition.predicate,
-                object=proposition.object,
-                confidence=proposition.confidence,
-                attributes={
-                    "particle": proposition.particle,
-                    "rule": proposition.rule,
-                    "relation_family": "proposition",
-                },
-            )
-        )
 
     return relations
