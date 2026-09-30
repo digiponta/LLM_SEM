@@ -19,9 +19,14 @@ from semantic_proposition_v036 import Proposition
 def generate_semantic_relations(
     extracted: PurposeIntentResult,
     propositions: Optional[List[Proposition]] = None,
+    *,
+    purpose_text: Optional[str] = None,
+    concept_texts: Optional[List[str]] = None,
 ) -> List[SemanticRelation]:
     """Generate semantic relations from Concept / Intent / Purpose / Proposition."""
     relations: List[SemanticRelation] = []
+    effective_purpose = purpose_text or extracted.purpose_text
+    effective_concepts = concept_texts or extracted.concept_texts
 
     predicate_map = {
         "definition": "requests_definition_of",
@@ -33,7 +38,7 @@ def generate_semantic_relations(
     }
     predicate = predicate_map.get(extracted.intent, "mentions")
 
-    for concept in extracted.concept_texts:
+    for concept in effective_concepts:
         relations.append(
             SemanticRelation(
                 subject="query",
@@ -49,7 +54,7 @@ def generate_semantic_relations(
 
         relations.append(
             SemanticRelation(
-                subject=extracted.purpose_text,
+                subject=effective_purpose,
                 predicate="targets_concept",
                 object=concept,
                 confidence=extracted.confidence,
@@ -63,7 +68,7 @@ def generate_semantic_relations(
         SemanticRelation(
             subject="query",
             predicate="has_purpose",
-            object=extracted.purpose_text,
+            object=effective_purpose,
             confidence=extracted.confidence,
             attributes={
                 "intent": extracted.intent,
