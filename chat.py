@@ -25,6 +25,11 @@ from adaptive_semantic_runtime import (
     decide_adaptive_route,
     encode_memory,
 )
+from adaptive_composition_runtime_v065 import (
+    AdaptiveCompositionRuntime,
+    enrich_proposition_specs,
+    ROLE_CHECKPOINT as COMPOSITION_ROLE_CHECKPOINT,
+)
 from model import LanguageModel
 from semantic_eval import load_benchmark
 from semantic_router import (
@@ -99,6 +104,17 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Automatically generate/display SemanticDataV2 for normal queries.",
+    )
+    p.add_argument(
+        "--composition",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable v0.6.5 adaptive proposition composition.",
+    )
+    p.add_argument(
+        "--composition-checkpoint",
+        default=COMPOSITION_ROLE_CHECKPOINT,
+        help="Frozen structural-role checkpoint used by adaptive composition.",
     )
     return p.parse_args()
 
@@ -244,13 +260,25 @@ def print_semantic_v2(summary: dict[str, object], runtime: dict[str, object]) ->
         for prop in propositions:
             if not isinstance(prop, dict):
                 continue
+            attrs = prop.get("attributes") or {}
             print(
                 "    "
                 f"{prop.get('proposition_id')}: "
                 f"{prop.get('subject')} --{prop.get('predicate')}--> "
                 f"{prop.get('object')} "
-                f"vec={prop.get('vector_dimension')}"
+                f"vec={prop.get('vector_dimension')} "
+                f"role={prop.get('vector_role') or 'proposition'}"
             )
+            if isinstance(attrs, dict) and attrs.get("composition_mode"):
+                print(
+                    "      "
+                    f"composition={attrs.get('composition_mode')} "
+                    f"weights={attrs.get('composition_weights')} "
+                    f"novelty=(R:{attrs.get('relation_seen')}, "
+                    f"S:{attrs.get('subject_seen')}, "
+                    f"O:{attrs.get('object_seen')}) "
+                    f"conf={attrs.get('composition_confidence')}"
+                )
 
     gate_state = context.get("gate_state") if isinstance(context, dict) else None
     decision_margin = (
@@ -432,6 +460,15 @@ def main() -> None:
     memory_path = Path(args.memory)
     learning_enabled = bool(args.learn)
     semantic_v2_enabled = bool(args.semantic_v2)
+    composition_enabled = bool(args.composition)
+    composition_runtime = (
+        AdaptiveCompositionRuntime(
+            device,
+            checkpoint_path=args.composition_checkpoint,
+        )
+        if composition_enabled
+        else None
+    )
     last_text: str | None = None
     last_semantic_v2 = None
     last_snapshot: TeachingSnapshot | None = None
@@ -456,7 +493,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.6.1 Unified Semantic Runtime")
+    print(" LLM_SEM v0.6.5 Unified Semantic Runtime")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -467,6 +504,10 @@ def main() -> None:
     print("Adaptive samples:", len(adaptive))
     print("Learning        :", "ON" if learning_enabled else "OFF")
     print("Semantic Data v2:", "ON" if semantic_v2_enabled else "OFF")
+    print("Composition      :", "ON" if composition_enabled else "OFF")
+    if composition_runtime is not None:
+        print("Composition ckpt :", composition_runtime.checkpoint_path)
+        print("Composition seed :", composition_runtime.seed)
     print("Local evidence   : ON")
     print("Prototypes/label :", args.prototypes_per_label)
     print("Local k          :", args.local_k)
@@ -533,11 +574,15 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.6.1 Unified Semantic Runtime")
+            print("Runtime        : LLM_SEM v0.6.5 Unified Semantic Runtime")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print("Semantic data  : v2.0")
-            print("Structure      : relation + proposition vectors")
+            print("Structure      : relation + adaptive proposition vectors")
+            print(
+                "Composition    : "
+                + ("adaptive confirmed gate" if composition_enabled else "OFF")
+            )
             print(
                 "Policy         : "
                 f"mem>={args.memory_sim:.2f}, override>={args.override_sim:.2f}, "
@@ -613,6 +658,13 @@ def main() -> None:
                         concept_texts=concept_texts,
                     )
                     prop_specs = proposition_specs(propositions)
+                    if composition_runtime is not None:
+                        prop_specs = enrich_proposition_specs(
+                            composition_runtime,
+                            model,
+                            tokenizer,
+                            prop_specs,
+                        )
                     after_runtime = {
                         "memory_label": after_snapshot.memory_label,
                         "memory_similarity": (
@@ -739,6 +791,13 @@ def main() -> None:
                 concept_texts=concept_texts,
             )
             prop_specs = proposition_specs(propositions)
+            if composition_runtime is not None:
+                prop_specs = enrich_proposition_specs(
+                    composition_runtime,
+                    model,
+                    tokenizer,
+                    prop_specs,
+                )
             adaptive = load_semantic_memory(memory_path)
             taught_label = exact_memory_label(memory_path, text)
             candidate_rows = ranked[: min(3, len(ranked))]
@@ -773,7 +832,7 @@ def main() -> None:
                 "adaptive_samples": len(adaptive),
                 "memory_labels": len({row.label for row in adaptive}),
                 "metadata": {
-                    "runtime": "v0.6.1-unified",
+                    "runtime": "v0.6.5-unified",
                     "router": "base-fixed + adaptive-local-evidence",
                     "policy": args.policy,
                     "intent_rule": extracted.rule,
