@@ -243,6 +243,7 @@ def build_runtime_semantic_v2(
     concept_texts: Optional[Sequence[str]] = None,
     purpose_text: Optional[str] = None,
     intent: Optional[str] = None,
+    extra_relations: Optional[Sequence[SemanticRelation]] = None,
 ) -> SemanticDataV2:
     """Build Semantic Data v2.0 from one runtime decision.
 
@@ -257,13 +258,13 @@ def build_runtime_semantic_v2(
     confidence = estimate_runtime_confidence(signals)
     uncertainty = estimate_runtime_uncertainty(signals, confidence)
 
+    # Semantic concepts are kept separate from routing evidence. Selected,
+    # memory, and base labels remain in relations/context instead of being
+    # injected into Concept Vectors[].
     concepts = list(concept_texts or [])
-    if signals.selected_label and signals.selected_label not in concepts:
-        concepts.append(signals.selected_label)
-    if signals.memory_label and signals.memory_label not in concepts:
-        concepts.append(signals.memory_label)
-    if signals.base_label and signals.base_label not in concepts:
-        concepts.append(signals.base_label)
+
+    merged_relations = runtime_relations(signals)
+    merged_relations.extend(list(extra_relations or []))
 
     semantic = encode_semantic_v2(
         model,
@@ -272,13 +273,13 @@ def build_runtime_semantic_v2(
         concepts=concepts or None,
         purpose_text=purpose_text,
         intent=intent,
-        relations=runtime_relations(signals),
+        relations=merged_relations,
         context_text=None,
         context_attributes=runtime_context(signals).attributes,
         confidence=confidence,
         uncertainty=uncertainty,
         metadata={
-            "runtime_adapter": "v0.3.3",
+            "runtime_adapter": "v0.3.5",
             "source_runtime": "LLM_SEM v0.3 adaptive",
             **signals.metadata,
         },
@@ -296,6 +297,7 @@ def from_runtime_dict(
     concept_texts: Optional[Sequence[str]] = None,
     purpose_text: Optional[str] = None,
     intent: Optional[str] = None,
+    extra_relations: Optional[Sequence[SemanticRelation]] = None,
 ) -> SemanticDataV2:
     """Convenience adapter for chat.py-style dictionaries.
 
@@ -315,6 +317,7 @@ def from_runtime_dict(
         concept_texts=concept_texts,
         purpose_text=purpose_text,
         intent=intent,
+        extra_relations=extra_relations,
     )
 
 
