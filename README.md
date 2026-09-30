@@ -1712,3 +1712,97 @@ probabilities, and a PASS does not imply logical correctness. The goal is to
 measure whether structural distinctions are present in the current frozen
 semantic space strongly enough to support future proposition-aware routing,
 gating, or projection learning.
+
+
+## v0.4.1 Structural Role Encoding / Projection
+
+v0.4.1 adds trainable role-specific projections for Subject, Predicate, and
+Object while keeping the base LLM_SEM semantic encoder frozen.
+
+The structural composition changes from a simple role-agnostic mean:
+
+```text
+mean(Subject, Predicate, Object)
+```
+
+to:
+
+```text
+normalize(
+    W_subject(Subject)
+  + W_predicate(Predicate)
+  + W_object(Object)
+)
+```
+
+Each projection is a learnable 64 -> 64 linear transformation initialized as
+identity.
+
+Training uses the same positive/counterfactual structure introduced in v0.4.0.
+For every proposition, the projected composition is optimized so that its
+similarity to the correct proposition exceeds the similarity to one-element
+counterfactuals by a target margin.
+
+The loss is a margin-ranking objective:
+
+```text
+max(0, target_margin - sim(projected, positive) + sim(projected, counterfactual))
+```
+
+The base Transformer remains completely frozen. Only the three structural role
+projection matrices are trained.
+
+Run:
+
+```powershell
+python run_structural_role_projection_v041.py
+```
+
+The experiment currently uses:
+
+```text
+Seeds         : 1, 2, 3, 4, 5
+Epochs        : 250
+Learning rate : 1e-3
+Target margin : 0.10
+```
+
+The output reports, for every seed:
+
+```text
+before positive-margin cases / mean margin
+after  positive-margin cases / mean margin
+minimum post-training margin
+```
+
+The best seed is selected lexicographically by:
+
+```text
+positive-margin case count
+mean structural margin
+minimum structural margin
+```
+
+The best projection is saved as:
+
+```text
+model/structural-role-projection-v041.pt
+```
+
+The primary evaluation target is to improve the v0.4.0 baseline from:
+
+```text
+Positive-margin cases : 2/4
+Mean structural margin: -0.014815
+```
+
+toward:
+
+```text
+Positive-margin cases : 4/4
+Mean structural margin: > 0
+```
+
+This experiment tests whether explicit role encoding can recover structural
+distinctions that are only partially represented in the raw frozen semantic
+space.
