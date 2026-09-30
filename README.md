@@ -2474,3 +2474,74 @@ exploratory / post-hoc
 because its rule is motivated by the v0.6.2 observations. If the adaptive gate
 improves the existing holdout result, a new independently designed holdout set
 will be required for confirmatory evaluation.
+
+
+## v0.6.4 Confirmatory Adaptive Semantic Composition
+
+v0.6.4 freezes the v0.6.3 adaptive composition rule and evaluates it on new
+confirmatory holdout cases.
+
+New script:
+
+```powershell
+python run_adaptive_composition_confirmatory_v064.py
+```
+
+The v0.6.3 gate is not modified:
+
+```text
+known relation
+  -> balanced
+
+unseen relation + subject/object both seen in TRAIN
+  -> relation_aware
+
+otherwise
+  -> balanced
+```
+
+No gate training, composition-weight tuning, threshold tuning, or seed
+selection is performed.
+
+### New confirmatory splits
+
+```text
+D) known relation / new concepts
+E) unseen relation / seen concepts
+F) unseen relation / partially seen concepts
+G) unseen relation / new concepts
+```
+
+Compared methods:
+
+```text
+balanced
+relation_aware
+adaptive_gate
+```
+
+The primary confirmatory criterion is:
+
+```text
+adaptive_gate positive cases >= balanced positive cases
+AND
+adaptive_gate mean margin >= balanced mean margin
+```
+
+The script reports:
+
+```text
+Positive-case delta
+Mean-margin delta
+Confirmed: True / False
+```
+
+A `Confirmed=True` result means the frozen v0.6.3 policy replicated on the
+newly introduced holdout set. A `Confirmed=False` result means the v0.6.3
+gain remains exploratory and should not be promoted to the runtime.
+
+Results are saved to:
+
+```text
+results/adaptive_composition_confirmatory_v064.pt
+```
