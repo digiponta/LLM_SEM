@@ -125,3 +125,25 @@ def refine_purpose(
         if p.subject != "implicit_subject":
             return f"explain_reason({p.subject}, {p.object})"
     return purpose_text
+
+
+def proposition_concepts(
+    original_concepts: List[str],
+    propositions: List[Proposition],
+) -> List[str]:
+    """Expand Concept Vectors[] with proposition subject/object concepts.
+
+    If a proposition is available, prefer its explicit semantic components over
+    the unsplit proposition phrase. Otherwise preserve the original concepts.
+    """
+    if not propositions:
+        return list(dict.fromkeys(original_concepts))
+
+    concepts: List[str] = []
+    for proposition in propositions:
+        if proposition.subject != "implicit_subject":
+            concepts.append(proposition.subject)
+        if proposition.object:
+            concepts.append(proposition.object)
+
+    return list(dict.fromkeys(concepts or original_concepts))
