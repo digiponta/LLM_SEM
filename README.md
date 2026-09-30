@@ -792,3 +792,141 @@ The encoder is intentionally extraction-agnostic. Concept, purpose, relation,
 and context extraction can be supplied by the current adaptive-memory runtime,
 rule-based logic, or future learned semantic heads without changing the v2.0
 data contract.
+
+
+## v0.5.1 Semantic Data v2 Runtime Integration
+
+Branch:
+
+```text
+v0.5.1-semantic-data-v2-runtime
+```
+
+v0.5.1 connects the adaptive semantic runtime signals to the structured
+Semantic Data v2.0 contract.
+
+The current runtime already produces signals such as:
+
+```text
+memory label / similarity / margin
+local majority / purity / k
+base label / similarity
+prototype labels / scores
+gate state
+selected label
+adaptive sample counts
+```
+
+These values are now mapped as follows:
+
+```text
+Adaptive Runtime
+    |
+    +-- memory candidate -----------+
+    +-- local majority -------------+
+    +-- base candidate -------------+--> relations[]
+    +-- selected label -------------+
+    +-- prototype labels -----------+
+    |
+    +-- gate/runtime state ------------> context.attributes
+    |
+    +-- similarity / purity / margin --> confidence + uncertainty
+    |
+    +-- query text --------------------> global_vector
+    |
+    +-- concept labels ----------------> concept_vectors[]
+    |
+    +-- task/purpose ------------------> purpose.vector
+```
+
+The adapter is implemented in:
+
+```text
+semantic_runtime_v2.py
+```
+
+Primary types/functions:
+
+```python
+RuntimeSemanticSignals
+build_runtime_semantic_v2(...)
+from_runtime_dict(...)
+runtime_summary(...)
+```
+
+### Minimal chat runtime integration
+
+After the v0.4.x runtime has calculated its normal decision values:
+
+```python
+runtime = {
+    "memory_label": memory_label,
+    "memory_similarity": memory_similarity,
+    "memory_margin": memory_margin,
+    "local_majority": local_majority,
+    "local_purity": local_purity,
+    "local_k": local_k,
+    "base_label": base_label,
+    "base_similarity": base_similarity,
+    "gate_state": gate_state,
+    "selected_label": selected_label,
+    "adaptive_enabled": True,
+}
+```
+
+convert them with:
+
+```python
+from semantic_runtime_v2 import from_runtime_dict
+
+semantic_v2 = from_runtime_dict(
+    model,
+    tokenizer,
+    user_text,
+    runtime,
+    concept_texts=detected_concepts,
+    purpose_text=purpose_text,
+    intent=intent,
+)
+```
+
+The existing router remains unchanged because:
+
+```python
+legacy = semantic_v2.as_legacy()
+```
+
+still exposes the v2 global vector through the original SemanticData
+interface.
+
+### Confidence and uncertainty
+
+v0.5.1 deliberately uses a conservative runtime estimate rather than treating
+raw similarity as calibrated probability.
+
+The default order is:
+
+```text
+explicit confidence
+    -> memory similarity x local purity
+    -> base similarity
+    -> neutral fallback
+```
+
+A small memory margin increases uncertainty, and a gate state containing
+`REVIEW` forces elevated uncertainty. These are runtime heuristics, not
+probabilistic calibration.
+
+This separation allows later calibration experiments without changing the
+Semantic Data v2.0 schema.
+
+### Current integration boundary
+
+`chat_v0412.py` is not currently present in the GitHub repository, so v0.5.1
+adds a non-invasive adapter rather than modifying the local chat runtime
+directly.
+
+The intended local integration point is immediately after the existing
+memory/local/base/gate decision has been calculated. The resulting
+`SemanticDataV2` object can then be passed to QHA, Semantic Shell, logging,
+or future adaptive-learning stages.
