@@ -764,3 +764,80 @@ See the `LICENSE` file for the full license text.
 
 Apache License 2.0  
 Copyright (c) Hirofumi Inomata
+
+
+## Semantic Data v2.0 Runtime Integration on v0.3
+
+Branch `v0.3` now also includes the Semantic Data v2.0 representation and
+runtime adapter while preserving the existing Adaptive Semantic Learning flow.
+
+Added/updated files:
+
+```text
+semantic.py                    Semantic Data v2.0 + legacy compatibility
+semantic_runtime_v2.py         adaptive-runtime -> SemanticDataV2 adapter
+semantic_runtime_v2_demo.py    runtime integration example
+```
+
+The existing v0.3 semantic-memory runtime can remain the decision source:
+
+```text
+User Query
+   |
+Frozen Semantic Encoder
+   |
+Adaptive Semantic Memory / Router
+   |
+memory / local / base / gate signals
+   |
+semantic_runtime_v2.py
+   |
+SemanticDataV2
+   |
+   +-- Global Vector
+   +-- Concept Vectors[]
+   +-- Purpose Vector
+   +-- Relations[]
+   +-- Context
+   +-- Confidence / Uncertainty
+```
+
+Typical integration:
+
+```python
+from semantic_runtime_v2 import from_runtime_dict
+
+runtime = {
+    "memory_label": memory_label,
+    "memory_similarity": memory_similarity,
+    "memory_margin": memory_margin,
+    "local_majority": local_majority,
+    "local_purity": local_purity,
+    "local_k": local_k,
+    "base_label": base_label,
+    "base_similarity": base_similarity,
+    "gate_state": gate_state,
+    "selected_label": selected_label,
+}
+
+semantic_v2 = from_runtime_dict(
+    model,
+    tokenizer,
+    user_text,
+    runtime,
+    concept_texts=detected_concepts,
+    purpose_text=purpose_text,
+    intent=intent,
+)
+```
+
+Existing SemanticData-v1 callers remain compatible through:
+
+```python
+legacy = semantic_v2.as_legacy()
+vector = semantic_v2.primary_vector()
+```
+
+This allows the v0.3 Adaptive Semantic Learning branch to serve as the
+experimental runtime for Semantic Data v2.0 without replacing the existing
+router or memory implementation.
