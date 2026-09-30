@@ -104,6 +104,8 @@ def gate_reason(gate: str, top1_similarity: float, margin: float, thresholds) ->
     sim_th = float(thresholds["similarity_threshold"])
     margin_th = float(thresholds["margin_threshold"])
 
+    if gate == "ACCEPT_MEMORY":
+        return "exact semantic-memory match overrides centroid thresholds"
     if gate == "UNKNOWN_KNOWLEDGE":
         return f"similarity {top1_similarity:.6f} < threshold {sim_th:.6f}"
     if gate == "GATE_REVIEW":
@@ -189,6 +191,11 @@ def print_semantic_v2(summary: dict[str, object], runtime: dict[str, object]) ->
         f"base={base_text} selected={selected_label or '(none)'}"
     )
     print(f"V2> disagreement={disagreement}")
+    print(
+        f"V2> memory_exact={bool(runtime.get('memory_exact'))} "
+        f"decision_source={runtime.get('decision_source') or 'router'} "
+        f"review_recommended={bool(runtime.get('review_recommended'))}"
+    )
     reason = runtime.get("gate_reason")
     if reason:
         print(f"V2> gate_reason={reason}")
@@ -201,26 +208,49 @@ def make_snapshot(
     base_ranked,
     memory_path: Path,
 ) -> TeachingSnapshot:
-    gate, top1, margin = classify_gate(ranked, thresholds)
     base_top1 = base_ranked[0]
     memory_label = exact_memory_label(memory_path, text)
+
     candidates = [
         (row.label, float(row.similarity))
         for row in ranked[: min(3, len(ranked))]
     ]
+
+    normal_gate, normal_top1, margin = classify_gate(ranked, thresholds)
+
+    if memory_label is not None:
+        memory_score = next(
+            (
+                float(row.similarity)
+                for row in ranked
+                if row.label == memory_label
+            ),
+            1.0,
+        )
+        return TeachingSnapshot(
+            text=text,
+            gate="ACCEPT_MEMORY",
+            selected_label=memory_label,
+            similarity=memory_score,
+            margin=float(margin),
+            candidates=candidates,
+            memory_label=memory_label,
+            base_label=base_top1.label,
+            base_similarity=float(base_top1.similarity),
+            disagreement=(memory_label != base_top1.label),
+        )
+
     return TeachingSnapshot(
         text=text,
-        gate=gate,
-        selected_label=top1.label,
-        similarity=float(top1.similarity),
+        gate=normal_gate,
+        selected_label=normal_top1.label,
+        similarity=float(normal_top1.similarity),
         margin=float(margin),
         candidates=candidates,
-        memory_label=memory_label,
+        memory_label=None,
         base_label=base_top1.label,
         base_similarity=float(base_top1.similarity),
-        disagreement=bool(
-            memory_label is not None and memory_label != base_top1.label
-        ),
+        disagreement=False,
     )
 
 
@@ -310,7 +340,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.3.2 Teaching Effect Evaluation")
+    print(" LLM_SEM v0.3.3 Memory-Aware Gate / Explicit Override")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -432,6 +462,13 @@ def main() -> None:
                             if after_snapshot.memory_label is not None
                             else None
                         ),
+                        "memory_exact": after_snapshot.memory_label is not None,
+                        "review_recommended": after_snapshot.disagreement,
+                        "decision_source": (
+                            "explicit_memory"
+                            if after_snapshot.memory_label is not None
+                            else "router"
+                        ),
                         "base_label": after_snapshot.base_label,
                         "base_similarity": after_snapshot.base_similarity,
                         "gate_state": after_snapshot.gate,
@@ -450,7 +487,7 @@ def main() -> None:
                         "adaptive_samples": len(adaptive),
                         "memory_labels": len({row.label for row in adaptive}),
                         "metadata": {
-                            "runtime": "v0.3.2-teaching-effect",
+                            "runtime": "v0.3.3-teaching-effect",
                             "router": "adaptive-centroid",
                             "policy": args.policy,
                             "event": "after-teach",
@@ -491,13 +528,12 @@ def main() -> None:
             memory_path,
         )
         gate = last_snapshot.gate
-        top1 = ranked[0]
         margin = last_snapshot.margin
         base_top1 = base_ranked[0]
 
         print(
-            f"SEM> {gate}  label={top1.label} "
-            f"sim={top1.similarity:.6f} margin={margin:.6f}"
+            f"SEM> {gate}  label={last_snapshot.selected_label} "
+            f"sim={last_snapshot.similarity:.6f} margin={margin:.6f}"
         )
 
         if semantic_v2_enabled:
@@ -513,28 +549,35 @@ def main() -> None:
             runtime = {
                 "memory_label": taught_label,
                 "memory_similarity": 1.0 if taught_label is not None else None,
+                "memory_exact": taught_label is not None,
+                "review_recommended": bool(
+                    taught_label is not None and taught_label != base_top1.label
+                ),
+                "decision_source": (
+                    "explicit_memory" if taught_label is not None else "router"
+                ),
                 "base_label": base_top1.label,
                 "base_similarity": float(base_top1.similarity),
                 "gate_state": gate,
-                "selected_label": top1.label,
-                "selected_similarity": float(top1.similarity),
+                "selected_label": last_snapshot.selected_label,
+                "selected_similarity": last_snapshot.similarity,
                 "decision_margin": float(margin),
                 "candidate_labels": candidate_labels,
                 "candidate_scores": candidate_scores,
                 # Cosine similarity is used only as a runtime heuristic here,
                 # not as a calibrated probability.
-                "confidence": float(top1.similarity),
+                "confidence": last_snapshot.similarity,
                 "adaptive_enabled": learning_enabled,
                 "adaptive_samples": len(adaptive),
                 "memory_labels": len({row.label for row in adaptive}),
                 "metadata": {
-                    "runtime": "v0.3.2-chat-native",
+                    "runtime": "v0.3.3-chat-native",
                     "router": "adaptive-centroid",
                     "policy": args.policy,
                 },
                 "gate_reason": gate_reason(
                     gate,
-                    float(top1.similarity),
+                    last_snapshot.similarity,
                     float(margin),
                     thresholds,
                 ),
@@ -545,18 +588,31 @@ def main() -> None:
                 tokenizer,
                 text,
                 runtime,
-                concept_texts=[top1.label],
+                concept_texts=[last_snapshot.selected_label],
                 purpose_text=text,
                 intent=None,
             )
             print_semantic_v2(runtime_summary(last_semantic_v2), runtime)
 
-        if gate == "UNKNOWN_KNOWLEDGE":
+        if gate == "ACCEPT_MEMORY":
+            print(
+                "SEM> Accepted by exact semantic memory: "
+                f"{last_snapshot.selected_label}"
+            )
+            if last_snapshot.disagreement:
+                print(
+                    "SEM> Base/memory disagreement detected; "
+                    "review is recommended."
+                )
+        elif gate == "UNKNOWN_KNOWLEDGE":
             print("SEM> Unknown semantic region. Teach with: /teach <label>")
         elif gate == "GATE_REVIEW":
             print("SEM> Ambiguous semantic region. Review or teach a better label.")
         else:
-            print(f"SEM> Routed to semantic class: {top1.label}")
+            print(
+                "SEM> Routed to semantic class: "
+                f"{last_snapshot.selected_label}"
+            )
 
 
 if __name__ == "__main__":
