@@ -28,7 +28,7 @@ CASES = [
     (
         "CUDAの設定方法を教えて",
         "how_to",
-        "CUDA",
+        "CUDAの設定",
         "requests_how_to_for",
     ),
     (
