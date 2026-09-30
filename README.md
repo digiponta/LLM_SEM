@@ -1128,3 +1128,92 @@ The centroid similarity is still retained as evidence and is not replaced by
 a synthetic probability. `ACCEPT_MEMORY` therefore means authoritative
 retrieval of an explicit teaching record, not probabilistic certainty that the
 teaching itself is objectively correct.
+
+
+## v0.3.4 Purpose / Intent Extraction
+
+The `v0.3` branch now separates the semantic topic from user intent and
+purpose before constructing `SemanticDataV2`.
+
+A lightweight rule-based extractor is implemented in:
+
+```text
+semantic_intent_v034.py
+```
+
+The extractor produces:
+
+```text
+Concept(s)
+Intent
+Purpose
+Extraction rule
+Extraction confidence
+```
+
+Examples:
+
+```text
+Input   : CPUとは
+Concept : CPU
+Intent  : definition
+Purpose : explain_definition(CPU)
+
+Input   : GPUについて教えて
+Concept : GPU
+Intent  : explain
+Purpose : explain(GPU)
+```
+
+When no reliable rule matches, the extractor falls back conservatively:
+
+```text
+Concept : original input
+Intent  : unspecified
+Purpose : original input
+Rule    : fallback
+```
+
+The chat runtime now combines the extracted concept with the selected semantic
+route label. This preserves both the user-level concept and the routing-level
+semantic class inside `SemanticDataV2`.
+
+Example output:
+
+```text
+You> CPUとは
+SEM> ACCEPT  label=computer ...
+
+V2> concepts=CPU, computer
+V2> purpose='explain_definition(CPU)' intent=definition
+V2> extraction rule=definition-pattern confidence=0.950
+```
+
+For an explicitly taught query such as `暗号`, the memory-aware gate from
+v0.3.3 remains active. Purpose/intent extraction is therefore orthogonal to
+routing authority and provenance.
+
+Current design:
+
+```text
+User Input
+   |
+   +--> Purpose / Intent Extractor
+   |       +-- Concept
+   |       +-- Intent
+   |       +-- Purpose
+   |
+   +--> Semantic Router / Memory-Aware Gate
+           +-- semantic class
+           +-- provenance
+           +-- confidence / uncertainty
+   |
+   +--------------------------+
+                              |
+                              v
+                       SemanticDataV2
+```
+
+v0.3.4 intentionally uses transparent rules rather than a learned intent head.
+This provides a reproducible baseline for later comparison with learned
+purpose/intent extraction.
