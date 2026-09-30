@@ -1909,3 +1909,89 @@ The best train-selected model is saved as:
 ```text
 model/structural-role-projection-v042.pt
 ```
+
+
+## v0.4.3 Relation-Unseen Structural Generalization
+
+v0.4.3 strengthens the structural generalization test by holding out entire
+relation labels from training.
+
+New script:
+
+```powershell
+python run_relation_unseen_generalization_v043.py
+```
+
+### Train relations
+
+The projection is trained only with:
+
+```text
+has_property
+targets
+related_with
+```
+
+### Unseen relations
+
+The following relation labels are never used in optimization:
+
+```text
+is_a
+has_predicate
+used_for
+part_of
+causes
+```
+
+### Three evaluation splits
+
+The experiment reports three increasingly strict conditions:
+
+```text
+A) Seen relation / unseen proposition
+B) Unseen relation / seen concepts
+C) Unseen relation / unseen concepts
+```
+
+A tests whether the model generalizes to new propositions using familiar
+relation labels.
+
+B tests whether role projection can handle a relation label never observed
+during training while reusing familiar concepts.
+
+C is the strictest test. Both the relation label and the core concepts are
+unseen during training.
+
+### Leakage control
+
+Holdout examples are excluded from:
+
+```text
+optimizer loss
+seed selection
+checkpoint selection
+```
+
+The best seed is selected using TRAIN metrics only.
+
+### Interpretation
+
+Strong evidence for structural role learning requires improvement not only in A
+but also in B, and preferably C.
+
+If only A improves, the projection may still depend strongly on learned
+relation labels.
+
+If B improves, there is evidence that Subject / Predicate / Object role
+encoding transfers to unseen predicates.
+
+If C also improves, the result is stronger evidence that the projection has
+learned reusable structural composition rather than memorized specific
+relations or concept combinations.
+
+The selected checkpoint is saved as:
+
+```text
+model/structural-role-projection-v043.pt
+```
