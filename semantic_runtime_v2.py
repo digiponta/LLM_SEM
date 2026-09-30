@@ -354,6 +354,9 @@ def runtime_summary(semantic: SemanticDataV2) -> Dict[str, object]:
                 "object": p.object,
                 "confidence": p.confidence,
                 "vector_dimension": p.vector.dimension,
+                "vector_role": p.vector.role,
+                "vector_model_type": p.vector.model_type,
+                "attributes": dict(p.attributes),
             }
             for p in semantic.propositions
         ],
