@@ -985,3 +985,76 @@ ACCEPT            -> both threshold conditions satisfied
 
 This provides the observation layer needed for the next experiment:
 measuring SemanticDataV2 changes before and after `/teach`.
+
+
+## v0.3.2 Teaching Effect Evaluation
+
+The `v0.3` branch now evaluates the effect of `/teach` immediately after a
+new semantic-memory entry is added.
+
+For every normal query, `chat.py` stores a pre-teaching snapshot containing:
+
+```text
+gate
+selected label
+Top-1 similarity
+Top-1 / Top-2 margin
+Top-3 candidates
+exact memory label
+base-only label / similarity
+base-memory disagreement
+```
+
+When the user executes:
+
+```text
+/teach <label>
+```
+
+the adaptive router and policy thresholds are rebuilt, the previous utterance
+is routed again, and the before/after states are compared automatically.
+
+Example workflow:
+
+```text
+You> 暗号
+SEM> UNKNOWN_KNOWLEDGE  label=science ...
+
+You> /teach computer
+Learned: label='computer', text='暗号' ...
+
+TCH> Teaching Effect Evaluation
+TCH> text='暗号' taught_label=computer
+TCH> before gate=UNKNOWN_KNOWLEDGE selected=science ...
+TCH> after  gate=... selected=...
+TCH> delta_similarity=...
+TCH> delta_margin=...
+TCH> gate_transition=UNKNOWN_KNOWLEDGE->...
+TCH> label_transition=science->...
+TCH> memory_before=(none) memory_after=computer
+TCH> base=science (...) disagreement_after=True
+TCH> candidates_before:
+     ...
+TCH> candidates_after:
+     ...
+```
+
+When Semantic Data v2 output is enabled, the post-teaching state is also
+converted immediately into a new `SemanticDataV2` object and displayed.
+
+This experiment separates three effects:
+
+```text
+Frozen/base semantic space
+        vs
+Adaptive router after teaching
+        vs
+Persistent exact semantic memory
+```
+
+The reported deltas are descriptive runtime measurements. Cosine similarity is
+not treated as a calibrated probability.
+
+Because the adaptive sample is included when policy thresholds are rebuilt,
+the before/after comparison measures the complete runtime effect of teaching,
+including both centroid changes and any resulting threshold changes.
