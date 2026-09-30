@@ -921,3 +921,67 @@ Existing adaptive-learning commands remain available:
 
 The integration remains backward compatible with the existing semantic router
 and memory system while making structured semantic state visible at runtime.
+
+
+## v0.3.1 Runtime Evidence Visualization
+
+The `v0.3` branch now includes the v0.3.1 runtime-evidence view in
+`chat.py`. The goal is to make the reasoning signals behind each
+SemanticDataV2 object visible rather than showing only the final selected
+semantic class.
+
+For every normal query, the chat runtime now evaluates both:
+
+```text
+Adaptive Router = base benchmark + semantic memory
+Base Router     = base benchmark only
+```
+
+and displays the top adaptive candidates together with memory/base evidence.
+
+Example:
+
+```text
+SEM> GATE_REVIEW  label=science sim=0.801727 margin=0.012000
+V2> schema=2.0 confidence=0.801727 uncertainty=0.760000
+V2> concepts=science
+V2> purpose='暗号とは'
+V2> context gate=GATE_REVIEW decision_margin=0.012000
+V2> candidates:
+    1. science      0.801727
+    2. computer     0.789727
+    3. weather      0.742100
+V2> memory=(none) base=science (0.798400) selected=science
+V2> disagreement=False
+V2> gate_reason=margin 0.012000 < threshold 0.020000
+```
+
+After an exact `/teach` memory entry exists, the view can expose a
+memory/base disagreement explicitly:
+
+```text
+V2> memory=computer base=science (...) selected=computer
+V2> disagreement=True
+```
+
+This distinction is important because it separates:
+
+```text
+what the frozen/base semantic space suggests
+from
+what adaptive semantic memory has taught the runtime
+```
+
+The v0.3.1 view uses real runtime evidence only. It does not synthesize
+signals that are not implemented in v0.3.
+
+The gate reason is also printed explicitly:
+
+```text
+UNKNOWN_KNOWLEDGE -> similarity below similarity threshold
+GATE_REVIEW       -> Top-1 / Top-2 margin below margin threshold
+ACCEPT            -> both threshold conditions satisfied
+```
+
+This provides the observation layer needed for the next experiment:
+measuring SemanticDataV2 changes before and after `/teach`.
