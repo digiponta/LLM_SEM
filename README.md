@@ -841,3 +841,83 @@ vector = semantic_v2.primary_vector()
 This allows the v0.3 Adaptive Semantic Learning branch to serve as the
 experimental runtime for Semantic Data v2.0 without replacing the existing
 router or memory implementation.
+
+
+## Native SemanticDataV2 integration in chat.py
+
+The `v0.3` branch now generates a `SemanticDataV2` object automatically
+for every normal user query in `chat.py`.
+
+The runtime flow is now:
+
+```text
+User query
+   |
+Semantic Router
+   |
+Known / Review / Unknown gate
+   |
+runtime signals
+   |
+semantic_runtime_v2.py
+   |
+SemanticDataV2
+   |
+automatic V2> display
+```
+
+The native v0.3 chat integration uses only signals that actually exist in the
+current runtime:
+
+```text
+Top-1 selected label / similarity
+Top-2 decision margin
+gate state
+top route candidates
+exact adaptive-memory match, when present
+adaptive sample count
+adaptive label count
+policy/runtime metadata
+```
+
+Signals that are not implemented in the v0.3 runtime, such as local-majority
+purity, are not synthesized.
+
+Example output:
+
+```text
+You> 量子状態の意味を教えて
+SEM> GATE_REVIEW  label=science sim=0.883911 margin=0.008111
+V2> schema=2.0 confidence=0.883911 uncertainty=0.837780
+V2> concepts=science
+V2> purpose='量子状態の意味を教えて'
+V2> context gate=GATE_REVIEW decision_margin=0.008111
+SEM> Ambiguous semantic region. Review or teach a better label.
+```
+
+Semantic Data v2 output is enabled by default. It can be controlled at startup:
+
+```powershell
+python chat.py --semantic-v2
+python chat.py --no-semantic-v2
+```
+
+or interactively:
+
+```text
+/semantic on
+/semantic off
+/semantic status
+```
+
+Existing adaptive-learning commands remain available:
+
+```text
+/learn on|off|status
+/teach <label>
+/memory
+/quit
+```
+
+The integration remains backward compatible with the existing semantic router
+and memory system while making structured semantic state visible at runtime.
