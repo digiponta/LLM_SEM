@@ -1806,3 +1806,106 @@ Mean structural margin: > 0
 This experiment tests whether explicit role encoding can recover structural
 distinctions that are only partially represented in the raw frozen semantic
 space.
+
+
+## v0.4.2 Structural Generalization / Holdout Evaluation
+
+v0.4.2 adds a strict train/holdout protocol to test whether Structural Role
+Projection learns reusable role binding rather than memorizing the propositions
+used during optimization.
+
+New script:
+
+```powershell
+python run_structural_generalization_holdout_v042.py
+```
+
+### Protocol
+
+The experiment separates propositions into:
+
+```text
+TRAIN   : 8 propositions
+HOLDOUT : 6 propositions
+```
+
+Holdout propositions are never included in the optimizer loss.
+
+The base LLM_SEM encoder remains frozen. Only the Subject / Predicate / Object
+projection matrices are trained.
+
+The training loss combines structural ranking and semantic preservation:
+
+```text
+Loss =
+    Margin Ranking Loss
+  + lambda * Preservation Loss
+```
+
+where:
+
+```text
+Margin Ranking Loss
+= max(0, target_margin - sim(projected, positive)
+                     + sim(projected, counterfactual))
+
+Preservation Loss
+= 1 - sim(projected, positive proposition)
+```
+
+Current settings:
+
+```text
+Seeds               : 1, 2, 3, 4, 5
+Epochs              : 300
+Learning rate       : 5e-4
+Target margin       : 0.08
+Preservation lambda : 0.35
+Initialization      : identity + small seed-dependent noise
+```
+
+Unlike v0.4.1, seed-dependent initialization makes the multi-seed experiment
+non-degenerate.
+
+### No holdout model selection
+
+The best seed is selected using TRAIN metrics only:
+
+```text
+positive-margin case count
+mean structural margin
+minimum structural margin
+mean semantic preservation
+```
+
+HOLDOUT metrics are never used to select or train the model.
+
+This avoids leaking evaluation information into model selection.
+
+### Output
+
+The script reports before/after metrics for both TRAIN and HOLDOUT:
+
+```text
+Positive-margin cases
+Mean structural margin
+Minimum structural margin
+Mean semantic preservation
+```
+
+The strongest evidence for structural learning is:
+
+```text
+TRAIN improves
+AND
+HOLDOUT also improves
+```
+
+If TRAIN improves strongly while HOLDOUT does not, the result remains
+compatible with memorization or overfitting.
+
+The best train-selected model is saved as:
+
+```text
+model/structural-role-projection-v042.pt
+```
