@@ -22,7 +22,7 @@ CASES = [
     (
         "Pythonの使い方を教えて",
         "how_to",
-        "Pythonの使い",
+        "Python",
         "requests_how_to_for",
     ),
     (
