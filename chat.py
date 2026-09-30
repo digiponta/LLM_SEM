@@ -30,7 +30,11 @@ from semantic_router import (
 from semantic_runtime_v2 import from_runtime_dict, runtime_summary
 from semantic_intent_v034 import extract_purpose_intent
 from semantic_relations_v035 import generate_semantic_relations
-from semantic_proposition_v036 import extract_propositions, refine_purpose
+from semantic_proposition_v036 import (
+    extract_propositions,
+    proposition_concepts,
+    refine_purpose,
+)
 from tokenizer import Tokenizer
 
 
@@ -374,7 +378,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.3.6 Proposition Relation Extraction")
+    print(" LLM_SEM v0.3.7 Proposition-Aware Concept Separation")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -500,9 +504,15 @@ def main() -> None:
                         extracted.purpose_text,
                         propositions,
                     )
+                    concept_texts = proposition_concepts(
+                        extracted.concept_texts,
+                        propositions,
+                    )
                     semantic_relations = generate_semantic_relations(
                         extracted,
                         propositions,
+                        purpose_text=purpose_text,
+                        concept_texts=concept_texts,
                     )
                     after_runtime = {
                         "memory_label": after_snapshot.memory_label,
@@ -536,7 +546,7 @@ def main() -> None:
                         "adaptive_samples": len(adaptive),
                         "memory_labels": len({row.label for row in adaptive}),
                         "metadata": {
-                            "runtime": "v0.3.6-teaching-effect",
+                            "runtime": "v0.3.7-teaching-effect",
                             "router": "adaptive-centroid",
                             "policy": args.policy,
                             "event": "after-teach",
@@ -556,7 +566,7 @@ def main() -> None:
                         tokenizer,
                         last_text,
                         after_runtime,
-                        concept_texts=extracted.concept_texts,
+                        concept_texts=concept_texts,
                         purpose_text=purpose_text,
                         intent=extracted.intent,
                         extra_relations=semantic_relations,
@@ -601,9 +611,15 @@ def main() -> None:
                 extracted.purpose_text,
                 propositions,
             )
+            concept_texts = proposition_concepts(
+                extracted.concept_texts,
+                propositions,
+            )
             semantic_relations = generate_semantic_relations(
                 extracted,
                 propositions,
+                purpose_text=purpose_text,
+                concept_texts=concept_texts,
             )
             adaptive = load_semantic_memory(memory_path)
             taught_label = exact_memory_label(memory_path, text)
@@ -639,7 +655,7 @@ def main() -> None:
                 "adaptive_samples": len(adaptive),
                 "memory_labels": len({row.label for row in adaptive}),
                 "metadata": {
-                    "runtime": "v0.3.6-chat-native",
+                    "runtime": "v0.3.7-chat-native",
                     "router": "adaptive-centroid",
                     "policy": args.policy,
                     "intent_rule": extracted.rule,
@@ -659,7 +675,7 @@ def main() -> None:
                 tokenizer,
                 text,
                 runtime,
-                concept_texts=extracted.concept_texts,
+                concept_texts=concept_texts,
                 purpose_text=purpose_text,
                 intent=extracted.intent,
                 extra_relations=semantic_relations,
