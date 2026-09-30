@@ -3,7 +3,11 @@
 # Regression tests for v0.3.6 proposition extraction.
 
 from semantic_intent_v034 import extract_purpose_intent
-from semantic_proposition_v036 import extract_propositions, refine_purpose
+from semantic_proposition_v036 import (
+    extract_propositions,
+    proposition_concepts,
+    refine_purpose,
+)
 
 
 CASES = [
@@ -46,6 +50,10 @@ def main() -> None:
             extracted.purpose_text,
             propositions,
         )
+        concepts = proposition_concepts(
+            extracted.concept_texts,
+            propositions,
+        )
 
         ok = bool(propositions)
         if ok:
@@ -56,6 +64,12 @@ def main() -> None:
                 and p.object == obj
                 and purpose == expected_purpose
             )
+            if text == "なぜGPUは高速ですか":
+                ok = ok and concepts == ["GPU", "高速"]
+            elif text == "CPUは命令を実行する":
+                ok = ok and concepts == ["CPU", "命令を実行する"]
+            elif text == "GPUが高速":
+                ok = ok and concepts == ["GPU", "高速"]
 
         status = "PASS" if ok else "FAIL"
         if propositions:
@@ -63,7 +77,7 @@ def main() -> None:
             print(
                 f"{index:02d}. [{status}] {text!r} -> "
                 f"{p.subject} --{p.predicate}--> {p.object} "
-                f"purpose={purpose}"
+                f"purpose={purpose} concepts={concepts}"
             )
         else:
             print(f"{index:02d}. [{status}] {text!r} -> no proposition")
