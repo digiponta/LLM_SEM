@@ -1320,3 +1320,60 @@ python run_semantic_relations_regression_v035.py
 ```
 
 It covers definition, explanation, how-to, and fallback relation generation.
+
+
+## v0.3.5.1 Intent Rule Priority Fix
+
+The rule order in the Purpose / Intent extractor has been corrected so that
+specific action patterns are evaluated before generic explanation patterns.
+
+Before:
+
+```text
+Pythonの使い方を教えて
+-> intent=explain
+-> concept=Pythonの使い方を
+```
+
+After:
+
+```text
+Pythonの使い方を教えて
+-> intent=how_to
+-> concept=Python
+-> purpose=how_to(Python)
+-> relation=query --requests_how_to_for--> Python
+```
+
+The priority is now:
+
+```text
+how_to
+definition
+why
+explain
+fallback
+```
+
+The regression suite has also been expanded to cover:
+
+```text
+CPUとは
+GPUについて教えて
+Pythonの使い方を教えて
+CUDAの設定方法を教えて
+なぜGPUは高速ですか
+暗号
+```
+
+Run:
+
+```powershell
+python run_semantic_relations_regression_v035.py
+```
+
+The expected result is:
+
+```text
+Result: 6/6 passed
+```
