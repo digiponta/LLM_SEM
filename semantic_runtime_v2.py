@@ -30,6 +30,9 @@ class RuntimeSemanticSignals:
     memory_label: Optional[str] = None
     memory_similarity: Optional[float] = None
     memory_margin: Optional[float] = None
+    memory_exact: Optional[bool] = None
+    review_recommended: Optional[bool] = None
+    decision_source: Optional[str] = None
 
     local_majority: Optional[str] = None
     local_purity: Optional[float] = None
@@ -128,9 +131,17 @@ def runtime_relations(signals: RuntimeSemanticSignals) -> List[SemanticRelation]
         relations.append(
             SemanticRelation(
                 subject="query",
-                predicate="memory_candidate",
+                predicate=(
+                    "explicit_memory_match"
+                    if signals.memory_exact
+                    else "memory_candidate"
+                ),
                 object=signals.memory_label,
                 confidence=_clamp01(signals.memory_similarity),
+                attributes={
+                    "exact": str(bool(signals.memory_exact)),
+                    "review_recommended": str(bool(signals.review_recommended)),
+                },
             )
         )
 
@@ -207,6 +218,12 @@ def runtime_context(signals: RuntimeSemanticSignals) -> SemanticContext:
         attrs["adaptive_samples"] = str(signals.adaptive_samples)
     if signals.memory_labels is not None:
         attrs["memory_labels"] = str(signals.memory_labels)
+    if signals.memory_exact is not None:
+        attrs["memory_exact"] = str(signals.memory_exact)
+    if signals.review_recommended is not None:
+        attrs["review_recommended"] = str(signals.review_recommended)
+    if signals.decision_source is not None:
+        attrs["decision_source"] = signals.decision_source
 
     attrs.update(signals.metadata)
 
@@ -261,8 +278,8 @@ def build_runtime_semantic_v2(
         confidence=confidence,
         uncertainty=uncertainty,
         metadata={
-            "runtime_adapter": "v0.5.1",
-            "source_runtime": "LLM_SEM v0.4.x adaptive",
+            "runtime_adapter": "v0.3.3",
+            "source_runtime": "LLM_SEM v0.3 adaptive",
             **signals.metadata,
         },
     )
