@@ -87,15 +87,25 @@ class SemanticConcept:
 
 @dataclass
 class SemanticRelation:
-    """Explicit relation/binding between concepts.
-
-    Relations are intentionally structural in Semantic Data v2.0. A future
-    version may additionally attach a learned relation vector.
-    """
+    """Explicit relation/binding between concepts with an optional vector."""
 
     subject: str
     predicate: str
     object: str
+    confidence: Optional[float] = None
+    attributes: Dict[str, str] = field(default_factory=dict)
+    vector: Optional[SemanticVector] = None
+
+
+@dataclass
+class SemanticProposition:
+    """Vectorized proposition node binding subject, predicate, and object."""
+
+    proposition_id: str
+    subject: str
+    predicate: str
+    object: str
+    vector: SemanticVector
     confidence: Optional[float] = None
     attributes: Dict[str, str] = field(default_factory=dict)
 
@@ -149,6 +159,7 @@ class SemanticDataV2:
     concept_vectors: List[SemanticConcept]
     purpose: SemanticPurpose
     relations: List[SemanticRelation] = field(default_factory=list)
+    propositions: List[SemanticProposition] = field(default_factory=list)
     context: Optional[SemanticContext] = None
     confidence: Optional[float] = None
     uncertainty: Optional[float] = None
@@ -249,6 +260,7 @@ def encode_semantic_v2(
     purpose_text: Optional[str] = None,
     intent: Optional[str] = None,
     relations: Optional[Sequence[SemanticRelation]] = None,
+    proposition_specs: Optional[Sequence[Dict[str, object]]] = None,
     context_text: Optional[str] = None,
     context_attributes: Optional[Dict[str, str]] = None,
     confidence: Optional[float] = None,
@@ -323,6 +335,69 @@ def encode_semantic_v2(
         ),
     )
 
+    relation_vectors: List[SemanticRelation] = []
+    for relation in relations or []:
+        relation_source = f"{relation.subject} {relation.predicate} {relation.object}"
+        relation_vectors.append(
+            SemanticRelation(
+                subject=relation.subject,
+                predicate=relation.predicate,
+                object=relation.object,
+                confidence=relation.confidence,
+                attributes=dict(relation.attributes),
+                vector=_encode_named_vector(
+                    model,
+                    tokenizer,
+                    relation_source,
+                    role="relation",
+                    pooling=pooling,
+                    hybrid_alpha=hybrid_alpha,
+                    normalize_hybrid=normalize_hybrid,
+                    confidence=relation.confidence,
+                ),
+            )
+        )
+
+    proposition_vectors: List[SemanticProposition] = []
+    for spec in proposition_specs or []:
+        proposition_id = str(spec.get("proposition_id", "proposition"))
+        subject = str(spec.get("subject", ""))
+        predicate = str(spec.get("predicate", ""))
+        object_text = str(spec.get("object", ""))
+        prop_conf = spec.get("confidence")
+        attributes = dict(spec.get("attributes") or {})
+        proposition_source = f"{subject} {predicate} {object_text}".strip()
+        if not proposition_source:
+            continue
+        proposition_vectors.append(
+            SemanticProposition(
+                proposition_id=proposition_id,
+                subject=subject,
+                predicate=predicate,
+                object=object_text,
+                confidence=(
+                    float(prop_conf)
+                    if isinstance(prop_conf, (int, float))
+                    else None
+                ),
+                attributes=attributes,
+                vector=_encode_named_vector(
+                    model,
+                    tokenizer,
+                    proposition_source,
+                    role="proposition",
+                    pooling=pooling,
+                    hybrid_alpha=hybrid_alpha,
+                    normalize_hybrid=normalize_hybrid,
+                    confidence=(
+                        float(prop_conf)
+                        if isinstance(prop_conf, (int, float))
+                        else None
+                    ),
+                ),
+            )
+        )
+
     context: Optional[SemanticContext] = None
     if context_text or context_attributes:
         context = SemanticContext(
@@ -348,7 +423,8 @@ def encode_semantic_v2(
         global_vector=global_vector,
         concept_vectors=concept_vectors,
         purpose=purpose,
-        relations=list(relations or []),
+        relations=relation_vectors,
+        propositions=proposition_vectors,
         context=context,
         confidence=confidence,
         uncertainty=uncertainty,
