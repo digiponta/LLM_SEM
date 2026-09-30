@@ -672,3 +672,123 @@ discovery-first:
 
 If no threshold pair satisfies the requested Known Recall constraint, the
 balanced policy falls back to the threshold pair with the highest Known Recall.
+
+
+## Semantic Data v2.0
+
+Branch:
+
+```text
+v0.5-semantic-data-v2
+```
+
+Semantic Data v2.0 extends the original single-vector representation into a
+structured semantic object.
+
+```text
+Semantic Data v2.0
+  |
+  +-- global_vector
+  |
+  +-- concept_vectors[]
+  |     +-- name
+  |     +-- vector
+  |     +-- role
+  |     +-- attributes
+  |
+  +-- purpose
+  |     +-- text
+  |     +-- intent
+  |     +-- vector
+  |
+  +-- relations[]
+  |     +-- subject
+  |     +-- predicate
+  |     +-- object
+  |
+  +-- context
+  |     +-- text
+  |     +-- optional context vector
+  |     +-- attributes
+  |
+  +-- confidence
+  +-- uncertainty
+  +-- metadata
+```
+
+The design separates several semantic signals that should not be collapsed
+into one embedding:
+
+- `global_vector` is the document/query-level vector used by the current
+  semantic router.
+- `concept_vectors[]` preserves multiple concept/entity representations.
+- `purpose.vector` represents intended action/goal separately from topic.
+- `relations[]` stores explicit directional structure and bindings.
+- `context` stores execution/domain/state information and may also have a
+  vector.
+- `confidence` and `uncertainty` expose quality information for gates and
+  QHA scheduling.
+
+Relations are structural data in v2.0. They are not forced into a relation
+embedding yet. This keeps the first implementation aligned with the
+structured-composition experiments and leaves relation-vector learning as a
+separate future experiment.
+
+### Backward compatibility
+
+The original API remains available:
+
+```python
+from semantic import encode_text
+
+legacy = encode_text(model, tokenizer, text)
+```
+
+New code can produce Semantic Data v2.0:
+
+```python
+from semantic import SemanticRelation, encode_semantic_v2
+
+semantic = encode_semantic_v2(
+    model,
+    tokenizer,
+    text,
+    concepts=["GPU", "ニューラルネットワーク"],
+    purpose_text="高速化する方法を教えて",
+    intent="explain",
+    relations=[
+        SemanticRelation(
+            subject="GPU",
+            predicate="accelerates",
+            object="ニューラルネットワーク",
+        )
+    ],
+    context_text="CUDAを利用する計算環境",
+)
+```
+
+Existing router/evaluation code can consume the v2 object through its global
+vector without modification:
+
+```python
+legacy = semantic.as_legacy()
+vector = semantic.primary_vector()
+```
+
+This makes the migration incremental:
+
+```text
+LLM_SEM
+   |
+Semantic Data v2.0
+   |-- global vector --------> existing Semantic Router
+   |-- concept vectors ------> semantic structure / memory
+   |-- purpose vector -------> QHA task/purpose scheduling
+   |-- relations/context ---> Semantic Shell / QHA Semantic OS
+   +-- confidence -----------> gate / Unknown / review
+```
+
+The encoder is intentionally extraction-agnostic. Concept, purpose, relation,
+and context extraction can be supplied by the current adaptive-memory runtime,
+rule-based logic, or future learned semantic heads without changing the v2.0
+data contract.
