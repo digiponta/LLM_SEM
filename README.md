@@ -2652,3 +2652,51 @@ A successful run ends with:
 ```text
 RESULT: PASS
 ```
+
+
+## v0.6.6 Proposition Runtime Validation
+
+v0.6.6 validates the actual runtime path that was not exercised by
+definition-only chat inputs:
+
+```text
+proposition extraction
+    -> adaptive composition
+    -> adaptive proposition vector
+    -> SemanticDataV2
+```
+
+New script:
+
+```powershell
+python run_composition_runtime_validation_v066.py
+```
+
+Representative cases include:
+
+```text
+GPUは高速
+  -> has_property
+  -> balanced
+
+GPUはcomputer
+  -> has_predicate
+  -> relation_aware
+
+GPUは計算装置
+  -> has_predicate
+  -> balanced
+```
+
+The script verifies proposition extraction, expected predicate,
+composition mode, generated vector length, SemanticDataV2 proposition
+creation, vector role, model type, and provenance.
+
+A successful run ends with:
+
+```text
+RESULT: PASS
+```
+
+Also, remaining v0.6.1 labels in `chat.py` help/description text were updated
+to v0.6.5.
