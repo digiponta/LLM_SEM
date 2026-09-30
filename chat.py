@@ -85,8 +85,22 @@ def classify_gate(ranked, thresholds):
     return "ACCEPT", top1, margin
 
 
-def print_semantic_v2(summary: dict[str, object]) -> None:
-    """Print a compact SemanticDataV2 runtime view."""
+def gate_reason(gate: str, top1_similarity: float, margin: float, thresholds) -> str:
+    sim_th = float(thresholds["similarity_threshold"])
+    margin_th = float(thresholds["margin_threshold"])
+
+    if gate == "UNKNOWN_KNOWLEDGE":
+        return f"similarity {top1_similarity:.6f} < threshold {sim_th:.6f}"
+    if gate == "GATE_REVIEW":
+        return f"margin {margin:.6f} < threshold {margin_th:.6f}"
+    return (
+        f"similarity {top1_similarity:.6f} >= {sim_th:.6f} and "
+        f"margin {margin:.6f} >= {margin_th:.6f}"
+    )
+
+
+def print_semantic_v2(summary: dict[str, object], runtime: dict[str, object]) -> None:
+    """Print SemanticDataV2 plus the runtime evidence behind the decision."""
     confidence = summary.get("confidence")
     uncertainty = summary.get("uncertainty")
     concepts = summary.get("concepts") or []
@@ -128,6 +142,42 @@ def print_semantic_v2(summary: dict[str, object]) -> None:
             f"decision_margin={decision_margin or 'n/a'}"
         )
 
+    candidates = runtime.get("candidate_labels") or []
+    scores = runtime.get("candidate_scores") or {}
+    if candidates:
+        print("V2> candidates:")
+        for index, label in enumerate(candidates, 1):
+            score = scores.get(label) if isinstance(scores, dict) else None
+            score_text = (
+                f"{float(score):.6f}"
+                if isinstance(score, (int, float))
+                else "n/a"
+            )
+            print(f"    {index}. {label:<12} {score_text}")
+
+    memory_label = runtime.get("memory_label")
+    base_label = runtime.get("base_label")
+    base_similarity = runtime.get("base_similarity")
+    selected_label = runtime.get("selected_label")
+    disagreement = bool(
+        memory_label is not None
+        and base_label is not None
+        and memory_label != base_label
+    )
+
+    base_text = str(base_label) if base_label is not None else "(none)"
+    if isinstance(base_similarity, (int, float)):
+        base_text += f" ({float(base_similarity):.6f})"
+
+    print(
+        f"V2> memory={memory_label or '(none)'} "
+        f"base={base_text} selected={selected_label or '(none)'}"
+    )
+    print(f"V2> disagreement={disagreement}")
+    reason = runtime.get("gate_reason")
+    if reason:
+        print(f"V2> gate_reason={reason}")
+
 
 def main() -> None:
     args = parse_args()
@@ -154,6 +204,8 @@ def main() -> None:
     last_semantic_v2 = None
 
     router = SemanticRouter(model, tokenizer, alpha=args.alpha)
+    base_router = SemanticRouter(model, tokenizer, alpha=args.alpha)
+    base_router.fit(base_samples)
 
     def rebuild():
         adaptive = load_semantic_memory(memory_path)
@@ -171,7 +223,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.3 Adaptive Semantic Learning + Semantic Data v2")
+    print(" LLM_SEM v0.3.1 Semantic Data v2 Runtime Evidence")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -272,6 +324,8 @@ def main() -> None:
         last_text = text
         ranked = router.route(text)
         gate, top1, margin = classify_gate(ranked, thresholds)
+        base_ranked = base_router.route(text)
+        base_top1 = base_ranked[0]
 
         print(
             f"SEM> {gate}  label={top1.label} "
@@ -291,6 +345,8 @@ def main() -> None:
             runtime = {
                 "memory_label": taught_label,
                 "memory_similarity": 1.0 if taught_label is not None else None,
+                "base_label": base_top1.label,
+                "base_similarity": float(base_top1.similarity),
                 "gate_state": gate,
                 "selected_label": top1.label,
                 "selected_similarity": float(top1.similarity),
@@ -304,10 +360,16 @@ def main() -> None:
                 "adaptive_samples": len(adaptive),
                 "memory_labels": len({row.label for row in adaptive}),
                 "metadata": {
-                    "runtime": "v0.3-chat-native",
+                    "runtime": "v0.3.1-chat-native",
                     "router": "adaptive-centroid",
                     "policy": args.policy,
                 },
+                "gate_reason": gate_reason(
+                    gate,
+                    float(top1.similarity),
+                    float(margin),
+                    thresholds,
+                ),
             }
 
             last_semantic_v2 = from_runtime_dict(
@@ -319,7 +381,7 @@ def main() -> None:
                 purpose_text=text,
                 intent=None,
             )
-            print_semantic_v2(runtime_summary(last_semantic_v2))
+            print_semantic_v2(runtime_summary(last_semantic_v2), runtime)
 
         if gate == "UNKNOWN_KNOWLEDGE":
             print("SEM> Unknown semantic region. Teach with: /teach <label>")
