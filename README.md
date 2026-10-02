@@ -2882,3 +2882,59 @@ It is represented as:
 This provides the baseline for v0.7, where the next research target is to move
 from single-proposition composition to multi-proposition semantic structure and
 Semantic Graph processing.
+
+
+## v0.7.2 Semantic Memory Consolidation
+
+v0.7.2 introduces a lifecycle for gradually moving verified Semantic Memory
+knowledge toward the LLM's internal/parametric memory without disabling the
+external memory too early.
+
+Lifecycle:
+
+```text
+ACTIVE
+  -> TRAINING
+  -> VALIDATING
+       | PASS -> CONSOLIDATED
+       | FAIL -> FAILED
+```
+
+Priority rule:
+
+```text
+ACTIVE / TRAINING / VALIDATING / FAILED
+    Semantic Memory remains authoritative and participates in adaptive routing.
+
+CONSOLIDATED
+    Internal/base model becomes primary.
+    The Semantic Memory record is retained as a verified backup/audit record.
+```
+
+New backend:
+
+```powershell
+python semantic_memory_consolidation.py status
+python semantic_memory_consolidation.py training "量子コンピュータについて教えて" --model-version model-v1
+python semantic_memory_consolidation.py validating "量子コンピュータについて教えて" --model-version model-v1
+python semantic_memory_consolidation.py pass "量子コンピュータについて教えて" --model-version model-v1
+```
+
+If validation fails:
+
+```powershell
+python semantic_memory_consolidation.py fail "量子コンピュータについて教えて" --model-version model-v1
+```
+
+A failed record remains active in Semantic Memory, so the system does not lose
+the taught knowledge while the internal-memory migration is retried.
+
+Regression:
+
+```powershell
+python run_semantic_memory_consolidation_regression_v072.py
+```
+
+The regression verifies that Memory remains primary through ACTIVE, TRAINING,
+VALIDATING, and FAILED, and is removed from normal adaptive routing only after
+a verified PASS changes the record to CONSOLIDATED.
