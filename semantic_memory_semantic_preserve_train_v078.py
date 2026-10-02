@@ -1,6 +1,6 @@
 # semantic_memory_semantic_preserve_train_v078.py
 #
-# LLM_SEM v0.7.8
+# LLM_SEM v0.8.0
 # Semantic-preserving consolidation.
 #
 # Goal:
@@ -38,7 +38,7 @@ DEFAULT_MEMORY = "data/semantic_memory.jsonl"
 DEFAULT_MODEL = "model/model-gpu-v0.4.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_BENCHMARK = "my_benchmark.csv"
-DEFAULT_OUTPUT = "model/model-sem-consolidation-v078.pt"
+DEFAULT_OUTPUT = "model/model-sem-consolidation-v080.pt"
 
 
 def training_records(path: Path) -> list[dict]:
@@ -120,7 +120,7 @@ def configure_trainable(model: LanguageModel) -> list[torch.nn.Parameter]:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.7.8 semantic-preserving consolidation"
+        description="LLM_SEM v0.8.0 semantic-preserving consolidation"
     )
     p.add_argument("--memory", default=DEFAULT_MEMORY)
     p.add_argument("--model", default=DEFAULT_MODEL)
@@ -197,7 +197,7 @@ def main() -> None:
     )
 
     print("=" * 92)
-    print(" LLM_SEM v0.7.8 Semantic-Preserving Consolidation")
+    print(" LLM_SEM v0.8.0 Semantic-Preserving Consolidation")
     print("=" * 92)
     print("Device             :", device)
     if device.type == "cuda":
@@ -306,8 +306,8 @@ def main() -> None:
     print("Memory transition : TRAINING -> VALIDATING")
     print("Next:")
     print(
-        "  python run_post_consolidation_semantic_router_v077.py "
-        "--candidate model/model-sem-consolidation-v078.pt"
+        "  python semantic_memory_batch_validate_v080.py "
+        "--candidate model/model-sem-consolidation-v080.pt"
     )
 
 
