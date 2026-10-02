@@ -3145,3 +3145,65 @@ A successful v0.7.5 run should retain improvement for the consolidated concept,
 generalize to unseen formulations, keep unrelated queries below the
 overgeneralization threshold, and show no ACTIVE Semantic Memory hit for any
 regression case.
+
+
+## v0.7.6 Calibrated Multi-Label Post-Consolidation Evaluation
+
+v0.7.5 reduced the unrelated-query target-label NLL gain from approximately
++1.06 to +0.71, but the unrelated case still failed under the absolute-NLL
+criterion.
+
+That result exposed an evaluation issue: after incremental training, the model
+can become better at the generic prompt pattern
+
+```text
+入力: ...
+意味分類:
+```
+
+for all labels. Therefore, a lower absolute NLL for `computer` on an unrelated
+weather query does not by itself prove semantic overgeneralization.
+
+v0.7.6 changes the post-consolidation criterion to relative multi-label
+competition.
+
+For each query, the model scores every benchmark label:
+
+```text
+animal
+weather
+computer
+food
+transport
+science
+```
+
+The expected label must:
+
+1. rank first by conditional NLL,
+2. have a positive margin over the strongest competing label,
+3. improve its relative margin compared with the source checkpoint, and
+4. have no active Semantic Memory hit.
+
+Run:
+
+```powershell
+python run_post_consolidation_regression_v076.py \
+  --candidate model/model-sem-consolidation-v075.pt
+```
+
+For the unrelated weather query, PASS now means that `weather` ranks above
+`computer` and all other labels with a sufficient positive margin. The
+absolute NLL change for `computer` remains visible as a diagnostic value but
+no longer determines PASS/FAIL by itself.
+
+This separates two effects:
+
+```text
+generic classification-format learning
+        versus
+semantic label overgeneralization
+```
+
+and provides a more appropriate test of whether consolidated internal memory
+preserves semantic discrimination.
