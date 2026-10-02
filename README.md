@@ -3382,3 +3382,62 @@ python run_post_consolidation_semantic_router_v077.py \
 The expected result is that the exact query now also reports
 `active_memory=(none)`, allowing all four post-consolidation cases to be tested
 strictly from internal semantic memory.
+
+
+## v0.8.0 Batch Semantic Memory Consolidation
+
+v0.8.0 extends semantic-preserving consolidation from one taught memory to a
+batch of multiple `TRAINING` records.
+
+The existing semantic-preserving trainer already optimizes all records currently
+in the `TRAINING` state together. v0.8.0 makes this behavior explicit and adds
+a batch-aware validator.
+
+Recommended flow:
+
+```powershell
+# Mark several records as TRAINING
+python semantic_memory_consolidation.py training "<text-1>" --model-version pending-v080
+python semantic_memory_consolidation.py training "<text-2>" --model-version pending-v080
+python semantic_memory_consolidation.py training "<text-3>" --model-version pending-v080
+
+# Joint semantic-preserving training
+python semantic_memory_semantic_preserve_train_v078.py
+
+# Independent per-record validation + global preservation guard
+python semantic_memory_batch_validate_v080.py \
+  --candidate model/model-sem-consolidation-v080.pt
+```
+
+The batch validator checks two levels:
+
+```text
+GLOBAL
+  benchmark LOO semantic-routing regression <= 10 percentage points
+
+PER RECORD
+  candidate_top == taught label
+  candidate semantic margin >= 0.02
+```
+
+If the global preservation guard fails, no record is promoted. If it passes,
+records are promoted independently:
+
+```text
+record PASS -> CONSOLIDATED
+record FAIL -> FAILED
+```
+
+This allows partial batch success without discarding failed teachings. FAILED
+records remain available in Semantic Memory for later retry.
+
+The objective remains:
+
+```text
+target semantic attraction
++ benchmark classification preservation
++ source-vector semantic preservation
+```
+
+so multiple memories can be internalized while constraining interference with
+the existing semantic space.
