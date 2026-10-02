@@ -3257,3 +3257,71 @@ ranking.
 
 LM-head NLL remains useful as a training diagnostic, but it is no longer treated
 as the primary proof that semantic knowledge was internalized.
+
+
+## v0.7.8 Semantic-Preserving Consolidation
+
+v0.7.7 showed that the v0.7.5 checkpoint preserved unrelated weather routing,
+but failed to move the taught exact/paraphrase quantum-computing examples into
+the intended `computer` semantic region. The source checkpoint itself routed
+those examples primarily to `science`, so ordinary language-model
+fine-tuning was not sufficient to implement the taught semantic correction.
+
+v0.7.8 adds a dedicated semantic-preserving consolidation trainer:
+
+```powershell
+python semantic_memory_semantic_preserve_train_v078.py
+```
+
+The training objective combines three terms:
+
+```text
+1. target classification loss
+   pull TRAINING Semantic Memory examples toward the taught class centroid
+
+2. benchmark classification loss
+   preserve the original benchmark class boundaries
+
+3. semantic preservation loss
+   keep benchmark semantic vectors close to the frozen source model
+```
+
+The source model acts as a frozen semantic teacher. Class centroids are built
+from the source checkpoint and `my_benchmark.csv`. Only the final Transformer
+block and `final_norm` are trainable; the LM head remains frozen.
+
+Default weights:
+
+```text
+target weight     : 2.0
+benchmark weight  : 1.0
+preserve weight   : 4.0
+learning rate     : 1e-5
+epochs            : 80
+semantic alpha    : 0.35
+temperature       : 0.08
+```
+
+Recommended flow:
+
+```powershell
+python semantic_memory_consolidation.py training "量子コンピュータについて教えて" --model-version pending-v078
+
+python semantic_memory_semantic_preserve_train_v078.py
+
+python run_post_consolidation_semantic_router_v077.py --candidate model/model-sem-consolidation-v078.pt
+```
+
+The intended success condition is:
+
+```text
+exact       -> computer
+paraphrase  -> computer
+related     -> computer
+unrelated   -> weather
+active_memory = (none)
+```
+
+This experiment shifts consolidation from generic next-token fine-tuning toward
+explicit parametric semantic-memory formation while constraining drift of the
+existing semantic space.
