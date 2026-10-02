@@ -1,0 +1,26 @@
+[
+  {
+    "group": "exact",
+    "text": "量子コンピュータについて教えて",
+    "target_label": "computer",
+    "expect": "improve"
+  },
+  {
+    "group": "paraphrase",
+    "text": "量子コンピュータとは何ですか",
+    "target_label": "computer",
+    "expect": "improve"
+  },
+  {
+    "group": "related",
+    "text": "量子計算について教えて",
+    "target_label": "computer",
+    "expect": "improve"
+  },
+  {
+    "group": "unrelated",
+    "text": "今日の天気について教えて",
+    "target_label": "computer",
+    "expect": "not_overgeneralize"
+  }
+]
