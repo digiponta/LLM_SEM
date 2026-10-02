@@ -110,7 +110,7 @@ def main() -> None:
     }
 
     print("=" * 96)
-    print(" LLM_SEM v0.7.4 Post-Consolidation Internal-Memory Regression")
+    print(" LLM_SEM v0.7.5 Strict Post-Consolidation Internal-Memory Regression")
     print("=" * 96)
     print("Device               :", device)
     if device.type == "cuda":
@@ -149,9 +149,10 @@ def main() -> None:
             raise ValueError(f"unsupported expect mode: {expect}")
 
         active_memory_label = exact_memory_label(memory_path, text)
-        if (text, target) in consolidated_pairs and active_memory_label is not None:
-            # This must never happen: consolidated exact entries should not
-            # participate in the active-memory path.
+        # v0.7.5 strict isolation: every regression query must be evaluated
+        # without an active Semantic Memory hit. This keeps exact/paraphrase/
+        # related results attributable to the checkpoint itself.
+        if active_memory_label is not None:
             passed = False
 
         grouped[group]["total"] += 1
@@ -212,12 +213,26 @@ def main() -> None:
                 row["text"],
             )
 
+    case_memory_independent = all(
+        exact_memory_label(memory_path, str(row["text"])) is None
+        for row in cases
+    )
+
     print()
     print(
         "Consolidated hidden from active memory:",
         "PASS" if exact_consolidated_hidden else "FAIL",
     )
-    final_pass = all_groups_present and all_pass and exact_consolidated_hidden
+    print(
+        "All regression cases memory-independent:",
+        "PASS" if case_memory_independent else "FAIL",
+    )
+    final_pass = (
+        all_groups_present
+        and all_pass
+        and exact_consolidated_hidden
+        and case_memory_independent
+    )
     print("RESULT:", "PASS" if final_pass else "FAIL")
 
     if final_pass:
