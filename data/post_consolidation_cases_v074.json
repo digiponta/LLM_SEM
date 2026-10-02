@@ -7,13 +7,13 @@
   },
   {
     "group": "paraphrase",
-    "text": "量子コンピュータとは何ですか",
+    "text": "量子計算機とはどのような装置ですか",
     "target_label": "computer",
     "expect": "improve"
   },
   {
     "group": "related",
-    "text": "量子計算について教えて",
+    "text": "量子ビットを使う計算について説明して",
     "target_label": "computer",
     "expect": "improve"
   },
