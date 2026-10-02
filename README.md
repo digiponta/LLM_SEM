@@ -3441,3 +3441,59 @@ target semantic attraction
 
 so multiple memories can be internalized while constraining interference with
 the existing semantic space.
+
+
+## v0.8.1 Hard-Case Retry
+
+v0.8.0 consolidated 2 of 3 batch records while improving benchmark LOO
+accuracy from 83.33% to 85.42%. One record remained FAILED:
+
+```text
+量子コンピュータとは何ですか -> computer
+```
+
+The candidate increased its similarity to `computer`, but `science`
+remained the top semantic class.
+
+v0.8.1 adds a focused retry stage:
+
+```powershell
+python semantic_memory_hard_retry_v081.py
+```
+
+The retry starts from the latest successful batch checkpoint rather than the
+original base model. It optimizes only FAILED records while protecting both:
+
+```text
+1. benchmark semantic geometry
+2. already-CONSOLIDATED Semantic Memory records
+```
+
+Default retry settings:
+
+```text
+epochs              : 120
+learning rate       : 5e-6
+target weight       : 4.0
+benchmark weight    : 1.0
+preserve weight     : 5.0
+consolidated weight : 3.0
+temperature         : 0.06
+```
+
+The LM head remains frozen; only the final Transformer block and final
+normalization are trainable.
+
+Recommended flow:
+
+```powershell
+python semantic_memory_hard_retry_v081.py
+
+python semantic_memory_batch_validate_v080.py \
+  --source model/model-sem-consolidation-v080.pt \
+  --candidate model/model-sem-consolidation-v081.pt
+```
+
+FAILED records move to `VALIDATING` only after the retry checkpoint is saved.
+Existing CONSOLIDATED records keep their lifecycle state and are used as
+protected semantic anchors during retry training.
