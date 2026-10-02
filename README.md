@@ -2938,3 +2938,78 @@ python run_semantic_memory_consolidation_regression_v072.py
 The regression verifies that Memory remains primary through ACTIVE, TRAINING,
 VALIDATING, and FAILED, and is removed from normal adaptive routing only after
 a verified PASS changes the record to CONSOLIDATED.
+
+
+## v0.7.3 Incremental Internal-Memory Consolidation
+
+v0.7.3 connects the v0.7.2 memory lifecycle to actual incremental language-model
+training and checkpoint validation.
+
+Flow:
+
+```text
+Semantic Memory ACTIVE
+        |
+        v
+TRAINING
+        |
+        | semantic_memory_incremental_train.py
+        | + replay corpus
+        v
+new checkpoint
+        |
+        v
+VALIDATING
+        |
+        | semantic_memory_validate_v073.py
+        |-- memory conditional-NLL improvement
+        |-- replay-loss regression guard
+        |
+   +----+----+
+   |         |
+ PASS       FAIL
+   |         |
+   v         v
+CONSOLIDATED FAILED
+   |         |
+internal     Semantic Memory
+memory       remains primary
+primary
+```
+
+The source checkpoint is never overwritten. The trainer writes a new checkpoint
+(default: `model/model-sem-consolidation-v073.pt`) and changes Semantic Memory
+entries from `TRAINING` to `VALIDATING` only after the save succeeds.
+
+Example:
+
+```powershell
+python semantic_memory_consolidation.py training "量子コンピュータについて教えて" --model-version pending-v073
+
+python semantic_memory_incremental_train.py
+
+python semantic_memory_validate_v073.py
+```
+
+Conservative defaults:
+
+```text
+incremental learning rate : 5e-5
+epochs                    : 3
+memory repetition         : 40
+replay text               : 20,000 characters
+max training samples      : 5,000
+
+minimum memory NLL gain   : 0.02
+maximum replay regression : 0.20 NLL
+```
+
+The incremental trainer uses the existing tokenizer and source checkpoint.
+TRAINING Semantic Memory is rendered into several natural-text forms and mixed
+with replay text from the original corpus to reduce catastrophic-forgetting
+risk.
+
+The validator compares the candidate checkpoint against the source checkpoint.
+Only a PASS changes records to `CONSOLIDATED`. A FAIL changes them to
+`FAILED`, which intentionally keeps Semantic Memory authoritative so the
+knowledge remains available while another consolidation attempt is prepared.
