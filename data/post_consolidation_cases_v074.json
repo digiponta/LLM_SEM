@@ -3,24 +3,24 @@
     "group": "exact",
     "text": "量子コンピュータについて教えて",
     "target_label": "computer",
-    "expect": "improve"
+    "expected_label": "computer"
   },
   {
     "group": "paraphrase",
     "text": "量子計算機とはどのような装置ですか",
     "target_label": "computer",
-    "expect": "improve"
+    "expected_label": "computer"
   },
   {
     "group": "related",
     "text": "量子ビットを使う計算について説明して",
     "target_label": "computer",
-    "expect": "improve"
+    "expected_label": "computer"
   },
   {
     "group": "unrelated",
     "text": "今日の天気について教えて",
     "target_label": "computer",
-    "expect": "not_overgeneralize"
+    "expected_label": "weather"
   }
 ]
