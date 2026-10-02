@@ -3207,3 +3207,53 @@ semantic label overgeneralization
 
 and provides a more appropriate test of whether consolidated internal memory
 preserves semantic discrimination.
+
+
+## v0.7.7 Semantic-Router Post-Consolidation Evaluation
+
+v0.7.6 showed that LM-head label-token likelihood is not a reliable semantic
+classifier for this experiment. Even the source checkpoint ranked
+`computer` above `weather` for a weather query, while the consolidated
+checkpoint ranked `transport` first for every tested case. This indicates a
+label-generation bias rather than a trustworthy semantic decision boundary.
+
+v0.7.7 therefore moves post-consolidation PASS/FAIL to the representation layer
+that LLM_SEM was designed to evaluate:
+
+```text
+checkpoint
+   |
+semantic hidden representation
+   |
+raw hybrid semantic vector
+(alpha = 0.35)
+   |
+centroids fitted from my_benchmark.csv
+   |
+semantic class ranking
+```
+
+Both the source and candidate checkpoints build their own centroid routers from
+the same benchmark. The test cases are then evaluated directly in semantic
+vector space.
+
+Run:
+
+```powershell
+python run_post_consolidation_semantic_router_v077.py \
+  --candidate model/model-sem-consolidation-v075.pt
+```
+
+A case passes when:
+
+1. the candidate semantic router ranks the expected class first,
+2. the candidate Top-1 / Top-2 semantic margin is non-negative (or above a
+   custom threshold), and
+3. no ACTIVE Semantic Memory exact hit exists.
+
+The script reports source/candidate Top-1 labels, cosine similarities, semantic
+margins, expected-label similarity gain, and the complete candidate label
+ranking.
+
+LM-head NLL remains useful as a training diagnostic, but it is no longer treated
+as the primary proof that semantic knowledge was internalized.
