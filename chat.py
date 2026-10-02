@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.6.5 Unified Semantic Runtime
+# LLM_SEM v0.7.2 Unified Semantic Runtime
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -18,6 +18,7 @@ from adaptive_semantic_learning import (
     append_semantic_memory,
     exact_memory_label,
     load_semantic_memory,
+    memory_status_counts,
     merge_samples,
 )
 from adaptive_semantic_runtime import (
@@ -73,7 +74,7 @@ class TeachingSnapshot:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
-            "LLM_SEM v0.6.5 Unified Semantic Runtime: adaptive memory, "
+            "LLM_SEM v0.7.2 Unified Semantic Runtime: adaptive memory, "
             "Semantic Data v2.0, structural relations/propositions, and "
             "local-evidence routing."
         )
@@ -493,7 +494,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.6.5 Unified Semantic Runtime")
+    print(" LLM_SEM v0.7.2 Unified Semantic Runtime")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -520,7 +521,7 @@ def main() -> None:
     print("  /semantic on|off|status")
     print("  /teach <label>       teach the previous user utterance")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.6.5 runtime policy")
+    print("  /runtime              show v0.7.2 runtime policy")
     print("  /quit")
     print()
 
@@ -566,17 +567,39 @@ def main() -> None:
         if text == "/memory":
             adaptive = load_semantic_memory(memory_path)
             labels = sorted({row.label for row in adaptive})
+            counts = memory_status_counts(memory_path)
             print(f"Adaptive samples: {len(adaptive)} -> {memory_path}")
             print(
                 "Adaptive labels :",
                 ", ".join(labels) if labels else "(none)",
             )
+            print(
+                "Memory states   : "
+                + ", ".join(
+                    f"{state}={counts.get(state, 0)}"
+                    for state in (
+                        "ACTIVE",
+                        "TRAINING",
+                        "VALIDATING",
+                        "FAILED",
+                        "CONSOLIDATED",
+                    )
+                )
+            )
+            print(
+                "Memory priority : ACTIVE/TRAINING/VALIDATING/FAILED "
+                "remain authoritative until validation PASS"
+            )
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.6.5 Unified Semantic Runtime")
+            print("Runtime        : LLM_SEM v0.7.2 Unified Semantic Runtime")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
+            print(
+                "Consolidation  : memory-primary until validation PASS; "
+                "CONSOLIDATED falls back to internal/base model"
+            )
             print("Semantic data  : v2.0")
             print("Structure      : relation + adaptive proposition vectors")
             print(
@@ -832,7 +855,7 @@ def main() -> None:
                 "adaptive_samples": len(adaptive),
                 "memory_labels": len({row.label for row in adaptive}),
                 "metadata": {
-                    "runtime": "v0.6.5-unified",
+                    "runtime": "v0.7.2-unified-consolidation",
                     "router": "base-fixed + adaptive-local-evidence",
                     "policy": args.policy,
                     "intent_rule": extracted.rule,
