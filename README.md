@@ -3325,3 +3325,60 @@ active_memory = (none)
 This experiment shifts consolidation from generic next-token fine-tuning toward
 explicit parametric semantic-memory formation while constraining drift of the
 existing semantic space.
+
+
+## v0.7.9 Semantic-Aware Consolidation Validation
+
+v0.7.8 successfully moved the taught quantum-computing examples into the
+`computer` region of semantic-vector space while preserving unrelated weather
+routing. The remaining exact-case failure occurred because the record was still
+in the `VALIDATING` lifecycle state, so active Semantic Memory correctly
+remained authoritative.
+
+v0.7.9 adds a Semantic Router based validator that decides whether a
+`VALIDATING` record can safely become `CONSOLIDATED`.
+
+Run:
+
+```powershell
+python semantic_memory_validate_v079.py \
+  --candidate model/model-sem-consolidation-v078.pt
+```
+
+PASS requires:
+
+```text
+taught exact query:
+  candidate_top == taught label
+  candidate semantic margin >= 0.02
+
+benchmark preservation:
+  candidate LOO accuracy must not regress by more than 10 percentage points
+```
+
+The validator compares source and candidate semantic routers using the same
+benchmark and hybrid semantic representation. Only after both the taught-record
+check and benchmark-preservation check pass does it perform:
+
+```text
+VALIDATING -> CONSOLIDATED
+```
+
+If either check fails:
+
+```text
+VALIDATING -> FAILED
+```
+
+and Semantic Memory remains authoritative.
+
+After a PASS, rerun:
+
+```powershell
+python run_post_consolidation_semantic_router_v077.py \
+  --candidate model/model-sem-consolidation-v078.pt
+```
+
+The expected result is that the exact query now also reports
+`active_memory=(none)`, allowing all four post-consolidation cases to be tested
+strictly from internal semantic memory.
