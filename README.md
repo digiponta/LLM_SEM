@@ -3070,3 +3070,78 @@ ACTIVE
 A PASS demonstrates both memory retention and basic generalization after
 migration. A FAIL does not delete the Semantic Memory record; the record remains
 available for audit and future recovery or re-training.
+
+
+## v0.7.5 Contrast-Balanced Consolidation
+
+v0.7.4 demonstrated successful retention for exact/paraphrase/related cases,
+but also exposed target-label overgeneralization: an unrelated weather query
+became substantially more likely to produce the consolidated `computer` label.
+In addition, two generalization queries still matched ACTIVE Semantic Memory
+entries, so they were not clean tests of parametric memory.
+
+v0.7.5 addresses both issues.
+
+Training changes:
+
+```text
+Semantic Memory target samples
+        +
+balanced semantic benchmark replay
+        +
+extra non-target-label reinforcement
+        +
+original corpus replay
+        |
+        v
+contrast-balanced incremental training
+```
+
+New trainer:
+
+```powershell
+python semantic_memory_incremental_train_v075.py
+```
+
+Default safeguards:
+
+```text
+learning rate          : 3e-5
+memory repeat          : 20
+semantic replay repeat : 4
+non-target boost       : 2
+original replay chars  : 20,000
+max samples            : 6,000
+```
+
+The semantic replay uses `my_benchmark.csv` and trains the correct semantic
+label for examples across all classes. Non-target classes are reinforced more
+strongly to reduce collapse toward the newly consolidated target label.
+
+The post-consolidation test is also stricter. All exact, paraphrase, related,
+and unrelated cases must have:
+
+```text
+active_memory = (none)
+```
+
+before they can count as PASS. Default paraphrase and related cases were
+changed to new formulations that are not expected to match existing taught
+memory exactly.
+
+Recommended retry:
+
+```powershell
+python semantic_memory_consolidation.py training "量子コンピュータについて教えて" --model-version pending-v075
+
+python semantic_memory_incremental_train_v075.py
+
+python semantic_memory_validate_v073.py --candidate model/model-sem-consolidation-v075.pt
+
+python run_post_consolidation_regression_v074.py --candidate model/model-sem-consolidation-v075.pt
+```
+
+A successful v0.7.5 run should retain improvement for the consolidated concept,
+generalize to unseen formulations, keep unrelated queries below the
+overgeneralization threshold, and show no ACTIVE Semantic Memory hit for any
+regression case.
