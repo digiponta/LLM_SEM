@@ -3013,3 +3013,60 @@ The validator compares the candidate checkpoint against the source checkpoint.
 Only a PASS changes records to `CONSOLIDATED`. A FAIL changes them to
 `FAILED`, which intentionally keeps Semantic Memory authoritative so the
 knowledge remains available while another consolidation attempt is prepared.
+
+
+## v0.7.4 Post-Consolidation Regression
+
+v0.7.4 verifies that knowledge marked `CONSOLIDATED` is actually usable from
+the candidate checkpoint after it has been removed from the active Semantic
+Memory routing path.
+
+The regression evaluates four categories:
+
+```text
+exact        original consolidated query
+paraphrase   semantically equivalent wording
+related      nearby semantic formulation
+unrelated    negative control for overgeneralization
+```
+
+Run:
+
+```powershell
+python run_post_consolidation_regression_v074.py
+```
+
+Default test cases are stored in:
+
+```text
+data/post_consolidation_cases_v074.json
+```
+
+For `exact`, `paraphrase`, and `related`, the candidate checkpoint must
+reduce the conditional NLL of the consolidated target label relative to the
+pre-consolidation source checkpoint.
+
+For `unrelated`, the consolidated label must not become substantially easier,
+which guards against broad semantic overgeneralization.
+
+The regression also verifies that a `CONSOLIDATED` exact record is no longer
+returned by the active Semantic Memory lookup. This ensures that a passing
+result reflects parametric/internal memory rather than an external-memory hit.
+
+The intended flow is therefore:
+
+```text
+ACTIVE
+  -> TRAINING
+  -> VALIDATING
+  -> CONSOLIDATED
+  -> post-consolidation regression
+       |-- exact
+       |-- paraphrase
+       |-- related
+       `-- unrelated
+```
+
+A PASS demonstrates both memory retention and basic generalization after
+migration. A FAIL does not delete the Semantic Memory record; the record remains
+available for audit and future recovery or re-training.
