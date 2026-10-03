@@ -666,7 +666,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.12 Sleep Output Stabilization")
+    print(" LLM_SEM v0.10.13 Sleep Retention Repair")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -708,7 +708,7 @@ def main() -> None:
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.12 runtime policy")
+    print("  /runtime              show v0.10.13 runtime policy")
     print("  /quit")
     print()
 
