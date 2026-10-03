@@ -3621,3 +3621,120 @@ than a separately trained parametric truth-classification head. A future
 truth-head experiment can move TRUE/FALSE/CONTESTED discrimination itself into
 model parameters while preserving this explicit metadata as the auditable
 source of truth.
+
+
+## v0.9.1 Truth-State Projection
+
+v0.9.1 adds a trainable Truth-State Projection head on top of the frozen
+LLM_SEM semantic encoder.
+
+Architecture:
+
+```text
+Frozen LLM_SEM semantic vector (64)
+                |
+                v
+       Truth-State Projection
+             64 -> 32 -> 5
+                |
+                +-- TRUE
+                +-- FALSE
+                +-- UNVERIFIED
+                +-- CONTESTED
+                +-- OUTDATED
+```
+
+The base Transformer remains completely frozen. Only the small truth-state head
+is trained.
+
+This distinction is important:
+
+```text
+The projection learns supervised truth-state labels.
+It does not independently discover objective truth from arbitrary text.
+```
+
+The explicit Truth-Aware Semantic Memory from v0.9.0 remains the auditable
+source of labels/provenance/corrections. The projection is an internal learned
+representation of those states.
+
+### Controlled seed dataset
+
+v0.9.1 includes:
+
+```text
+data/truth_state_v091.json
+```
+
+with five controlled examples for each state:
+
+```text
+TRUE
+FALSE
+UNVERIFIED
+CONTESTED
+OUTDATED
+```
+
+The trainer performs a stratified split with one holdout example per class by
+default.
+
+### Train
+
+```powershell
+python truth_state_projection_v091.py
+```
+
+Default configuration:
+
+```text
+base checkpoint    : model/model-sem-consolidation-v081.pt
+semantic pooling   : hybrid
+alpha              : 0.35
+projection         : 64 -> 32 -> 5
+epochs             : 300
+learning rate      : 1e-3
+holdout per class  : 1
+base encoder       : frozen
+```
+
+Output:
+
+```text
+model/truth-state-projection-v091.pt
+```
+
+The script reports train accuracy, holdout accuracy, per-class holdout results,
+and confidence for each held-out proposition.
+
+### Runtime inference
+
+After training:
+
+```powershell
+python truth_state_runtime_v091.py "太陽は地球の周りを公転する"
+```
+
+The runtime prints the complete five-state probability ranking and an explicit
+notice for FALSE, CONTESTED, OUTDATED, or UNVERIFIED predictions.
+
+### Interpretation
+
+A successful v0.9.1 result demonstrates that the frozen semantic representation
+contains enough separable information for a learned truth-state head on the
+controlled dataset.
+
+It does **not** establish factual verification capability. Truth labels still
+come from explicit supervision. Later experiments should add:
+
+```text
+1. larger independently sourced truth datasets
+2. paraphrase holdouts
+3. contradiction pairs
+4. provenance-aware features
+5. calibration / abstention
+6. joint semantic-topic + truth-state regression
+```
+
+Explicit Truth-Aware metadata should remain available even after projection
+training so that learned predictions never replace auditable provenance.
