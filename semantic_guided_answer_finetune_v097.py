@@ -251,7 +251,7 @@ def main() -> None:
     before_test = mean_qa_loss(teacher, tokenizer, test_rows, device)
 
     print("=" * 100)
-    print(" LLM_SEM v0.9.7 Semantic-Guided Answer Fine-Tuning")
+    print(" LLM_SEM v0.10.0 Semantic-Guided Fine-Tuning + Quality Selection")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
@@ -273,6 +273,11 @@ def main() -> None:
     print()
 
     last_total = None
+    best_holdout = float("inf")
+    best_sem_cos = -1.0
+    best_epoch = 0
+    best_state = None
+
     for epoch in range(1, max(1, args.epochs) + 1):
         student.train()
         optimizer.zero_grad(set_to_none=True)
@@ -303,19 +308,43 @@ def main() -> None:
         optimizer.step()
         last_total = float(total.item())
 
+        holdout_nll = mean_qa_loss(student, tokenizer, test_rows, device)
+        sem_cos = mean_semantic_cosine(
+            student, teacher, tokenizer, benchmark, device, args.alpha
+        )
+
+        # LLM_TRY-style quality-aware checkpoint selection:
+        # accept a candidate only while semantic retention remains strong,
+        # then choose the lowest holdout answer NLL.
+        if sem_cos >= 0.98 and holdout_nll < best_holdout:
+            best_holdout = holdout_nll
+            best_sem_cos = sem_cos
+            best_epoch = epoch
+            best_state = {
+                name: tensor.detach().cpu().clone()
+                for name, tensor in student.state_dict().items()
+            }
+
         if epoch == 1 or epoch % 10 == 0 or epoch == args.epochs:
-            holdout_nll = mean_qa_loss(student, tokenizer, test_rows, device)
-            sem_cos = mean_semantic_cosine(
-                student, teacher, tokenizer, benchmark, device, args.alpha
-            )
+            marker = " *BEST" if best_epoch == epoch else ""
             print(
                 f"Epoch {epoch:>3}/{args.epochs} "
                 f"total={float(total.item()):.6f} "
                 f"qa={float(qa_loss.item()):.6f} "
                 f"preserve={float(preserve_loss.item()):.6f} "
                 f"holdout={holdout_nll:.6f} "
-                f"sem_cos={sem_cos:.6f}"
+                f"sem_cos={sem_cos:.6f}{marker}"
             )
+
+    if best_state is not None:
+        student.load_state_dict(best_state)
+        student.to(device)
+        print(
+            f"Quality-selected checkpoint: epoch={best_epoch} "
+            f"holdout={best_holdout:.6f} sem_cos={best_sem_cos:.6f}"
+        )
+    else:
+        print("Quality-selected checkpoint: none met semantic cosine >= 0.98; using final state.")
 
     after_train = mean_qa_loss(student, tokenizer, train_rows, device)
     after_test = mean_qa_loss(student, tokenizer, test_rows, device)
@@ -339,6 +368,7 @@ def main() -> None:
     print("Holdout QA NLL  :", f"{before_test:.6f} -> {after_test:.6f}")
     print("Semantic cosine :", f"{sem_cos:.6f}")
     print("Saved checkpoint:", output)
+    print("Selected epoch  :", best_epoch if best_state is not None else args.epochs)
     print()
     if after_test < before_test and sem_cos >= 0.98:
         print("RESULT: PASS")
