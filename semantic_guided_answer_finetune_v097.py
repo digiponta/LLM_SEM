@@ -588,7 +588,7 @@ def main() -> None:
     before_test = mean_qa_loss(teacher, tokenizer, test_rows, device)
 
     print("=" * 100)
-    print(" LLM_SEM v0.10.0 Semantic-Guided Fine-Tuning + Quality Selection")
+    print(" LLM_SEM v0.10.29 Semantic-Guided Fine-Tuning + Training Trace")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
@@ -613,6 +613,63 @@ def main() -> None:
     print("Runtime replay rows :", len(runtime_replay_rows))
     print("Before train QA NLL :", f"{before_train:.6f}")
     print("Before holdout NLL  :", f"{before_test:.6f}")
+    print()
+
+    mandatory_trace_rows = [
+        row for row in train_rows if bool(row.get("must_train", False))
+    ]
+    optional_trace_rows = [
+        row for row in train_rows
+        if not bool(row.get("must_train", False))
+        and not bool(row.get("protected", False))
+    ]
+
+    print("=" * 100)
+    print(" SLEEP TRAINING TEXT TRACE")
+    print("=" * 100)
+
+    print(f"[NEW / MUST_TRAIN] rows={len(mandatory_trace_rows)}")
+    if mandatory_trace_rows:
+        for index, row in enumerate(mandatory_trace_rows, 1):
+            print(
+                f"  {index:02d}. concept={row_concept(row)!r} "
+                f"label={row.get('label')!r} "
+                f"weight={float(row.get('sleep_weight', 1.0)):.3f}"
+            )
+            print("      query :", row["query"])
+            print("      answer:", row["answer"])
+    else:
+        print("  (none)")
+
+    print()
+    print(f"[PROTECTED / RUNTIME_REPLAY] rows={len(runtime_replay_rows)}")
+    if runtime_replay_rows:
+        for index, row in enumerate(runtime_replay_rows, 1):
+            print(
+                f"  {index:02d}. label={row.get('selected_label')!r}"
+            )
+            print("      query :", row["query"])
+            print("      replay:", row["answer"])
+            print("      prompt:")
+            for line in str(row["prompt"]).splitlines():
+                print("        " + line)
+    else:
+        print("  (none)")
+
+    print()
+    print(f"[OPTIONAL / BASE_STABILIZATION] rows={len(optional_trace_rows)}")
+    if optional_trace_rows:
+        for index, row in enumerate(optional_trace_rows, 1):
+            print(
+                f"  {index:02d}. label={row.get('label')!r} "
+                f"source={row.get('sleep_source')!r} "
+                f"weight={float(row.get('sleep_weight', 1.0)):.3f}"
+            )
+            print("      query :", row["query"])
+            print("      answer:", row["answer"])
+    else:
+        print("  (none)")
+    print("=" * 100)
     print()
 
     last_total = None
