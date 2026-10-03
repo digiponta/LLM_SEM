@@ -97,7 +97,8 @@ def main():
     print("Failed/new concepts       :", ", ".join(sorted(failed_concepts)) or "(none)")
     print("Protected mandatory rows  :", protected)
     print("Selected mandatory rows   :", mandatory_selected)
-    print("Protected anchor rows      :", protected)\n    print("Optional/base rows retained:", len(selected) - mandatory_selected - protected)
+    print("Protected anchor rows      :", protected)
+    print("Optional/base rows retained:", len(selected) - mandatory_selected - protected)
     print("Output                    :", output_path)
 
     if not failed_concepts or mandatory_selected == 0:
