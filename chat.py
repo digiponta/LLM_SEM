@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.10 Degraded Retention
+# LLM_SEM v0.10.11 Iterative Sleep Consolidation
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -114,10 +114,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--relation-memory", default=DEFAULT_RELATION_MEMORY)
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument("--answer-gate-min-score", type=float, default=12.0)
-    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0109.pt")
-    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0109.pt")
+    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0111.pt")
+    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0111.pt")
     p.add_argument("--sleep-qa-epochs", type=int, default=240)
     p.add_argument("--sleep-epochs", type=int, default=80)
+    p.add_argument("--sleep-max-rounds", type=int, default=5)
+    p.add_argument("--sleep-target-mean", type=float, default=0.80)
+    p.add_argument("--sleep-target-min", type=float, default=0.60)
+    p.add_argument("--sleep-min-improvement", type=float, default=0.01)
+    p.add_argument("--sleep-max-stall-rounds", type=int, default=2)
     p.add_argument(
         "--policy",
         default=DEFAULT_POLICY,
@@ -647,7 +652,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.10 Degraded Retention")
+    print(" LLM_SEM v0.10.11 Iterative Sleep Consolidation")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -689,7 +694,7 @@ def main() -> None:
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.10 runtime policy")
+    print("  /runtime              show v0.10.11 runtime policy")
     print("  /quit")
     print()
 
@@ -784,6 +789,11 @@ def main() -> None:
                 "--relation-memory", str(args.relation_memory),
                 "--epochs", str(args.sleep_epochs),
                 "--qa-epochs", str(args.sleep_qa_epochs),
+                "--sleep-max-rounds", str(args.sleep_max_rounds),
+                "--sleep-target-mean", str(args.sleep_target_mean),
+                "--sleep-target-min", str(args.sleep_target_min),
+                "--sleep-min-improvement", str(args.sleep_min_improvement),
+                "--sleep-max-stall-rounds", str(args.sleep_max_stall_rounds),
             ]
             print("SLEEP> Semantic Memory -> internal LLM consolidation")
             print("SLEEP> source    :", args.model)
@@ -895,7 +905,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.10.10 Degraded Retention")
+            print("Runtime        : LLM_SEM v0.10.11 Iterative Sleep Consolidation")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
