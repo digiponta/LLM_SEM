@@ -63,6 +63,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--result-json", default="")
     p.add_argument("--prefer-final-state", action="store_true")
     p.add_argument("--concept-balanced", action="store_true")
+    p.add_argument("--protected-distill-weight", type=float, default=0.0)
     return p.parse_args()
 
 
@@ -87,6 +88,7 @@ def load_dataset(path: Path) -> list[dict]:
                 "sleep_source": str(row.get("sleep_source", row.get("source", "base"))),
                 "sleep_weight": float(row.get("sleep_weight", 1.0)),
                 "must_train": bool(row.get("must_train", False)),
+                "protected": bool(row.get("protected", False)),
             })
     if not rows:
         raise RuntimeError("No valid QA rows.")
@@ -100,7 +102,11 @@ def row_concept(row: dict) -> str:
 
 def concept_balanced_qa_loss(model, tokenizer, rows, device):
     mandatory = [row for row in rows if bool(row.get("must_train", False))]
-    optional = [row for row in rows if not bool(row.get("must_train", False))]
+    optional = [
+        row for row in rows
+        if not bool(row.get("must_train", False))
+        and not bool(row.get("protected", False))
+    ]
 
     concept_groups: dict[str, list[torch.Tensor]] = {}
     for row in mandatory:
@@ -171,16 +177,21 @@ def concept_generation_report(model, tokenizer, rows, device):
 def split_rows(rows: list[dict], holdout: float, seed: int):
     rng = random.Random(seed)
     mandatory = [row for row in rows if bool(row.get("must_train", False))]
-    optional = [row for row in rows if not bool(row.get("must_train", False))]
+    protected = [row for row in rows if bool(row.get("protected", False))]
+    optional = [
+        row for row in rows
+        if not bool(row.get("must_train", False))
+        and not bool(row.get("protected", False))
+    ]
     rng.shuffle(optional)
 
     if len(optional) <= 1:
-        return mandatory + optional, []
+        return mandatory + protected + optional, []
 
     n_test = max(1, int(round(len(optional) * holdout)))
     n_test = min(n_test, len(optional) - 1)
     test_rows = optional[:n_test]
-    train_rows = mandatory + optional[n_test:]
+    train_rows = mandatory + protected + optional[n_test:]
     return train_rows, test_rows
 
 
@@ -267,6 +278,39 @@ def semantic_vector(
         hybrid_alpha=alpha,
         normalize_hybrid=False,
     )[0]
+
+
+def protected_distillation_loss(
+    student: LanguageModel,
+    teacher: LanguageModel,
+    tokenizer: Tokenizer,
+    row: dict,
+    device: torch.device,
+) -> torch.Tensor:
+    prompt = build_prompt(row)
+    answer = row["answer"]
+
+    prompt_ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
+    answer_ids = tokenizer.encode(answer, add_bos=False, add_eos=True)
+    full = prompt_ids + answer_ids
+
+    x = torch.tensor([full[:-1]], dtype=torch.long, device=device)
+    first_answer_target = max(0, len(prompt_ids) - 1)
+
+    student_logits = student(x)[:, first_answer_target:, :]
+    with torch.no_grad():
+        teacher_logits = teacher(x)[:, first_answer_target:, :]
+
+    if student_logits.numel() == 0:
+        return torch.tensor(0.0, device=device)
+
+    teacher_probs = F.softmax(teacher_logits, dim=-1)
+    student_log_probs = F.log_softmax(student_logits, dim=-1)
+    return F.kl_div(
+        student_log_probs,
+        teacher_probs,
+        reduction="batchmean",
+    ) / max(1, student_logits.size(1))
 
 
 def semantic_vector_grad(
@@ -478,6 +522,8 @@ def main() -> None:
     print("LM-head LR          :", args.lm_head_lr)
     print("Preserve weight     :", args.preserve_weight)
     print("Concept balanced    :", args.concept_balanced)
+    print("Protected rows      :", sum(int(bool(r.get("protected", False))) for r in train_rows))
+    print("Protected distill wt:", args.protected_distill_weight)
     print("Before train QA NLL :", f"{before_train:.6f}")
     print("Before holdout NLL  :", f"{before_test:.6f}")
     print()
@@ -519,7 +565,29 @@ def main() -> None:
             )
         preserve_loss = torch.stack(preserve_losses).mean()
 
-        total = qa_loss + args.preserve_weight * preserve_loss
+        protected_rows = [
+            row for row in train_rows if bool(row.get("protected", False))
+        ]
+        if protected_rows and args.protected_distill_weight > 0.0:
+            protected_losses = [
+                protected_distillation_loss(
+                    student,
+                    teacher,
+                    tokenizer,
+                    row,
+                    device,
+                )
+                for row in protected_rows
+            ]
+            protected_loss = torch.stack(protected_losses).mean()
+        else:
+            protected_loss = torch.tensor(0.0, device=device)
+
+        total = (
+            qa_loss
+            + args.preserve_weight * preserve_loss
+            + args.protected_distill_weight * protected_loss
+        )
         total.backward()
         torch.nn.utils.clip_grad_norm_(
             semantic_params + lm_head_params,
@@ -552,6 +620,7 @@ def main() -> None:
                 f"total={float(total.item()):.6f} "
                 f"qa={float(qa_loss.item()):.6f} "
                 f"preserve={float(preserve_loss.item()):.6f} "
+                f"protect={float(protected_loss.item()):.6f} "
                 f"holdout={holdout_nll:.6f} "
                 f"sem_cos={sem_cos:.6f}{marker}"
             )
@@ -665,6 +734,7 @@ def main() -> None:
                     "holdout_nll_before": before_test,
                     "holdout_nll_after": after_test,
                     "semantic_cosine": sem_cos,
+                    "protected_distillation_loss": float(protected_loss.item()),
                     "generation_similarity_mean": generation_sim,
                     "generation_similarity_min": generation_min,
                     "concept_generation_mean": concept_generation_mean,
