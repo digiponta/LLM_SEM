@@ -49,6 +49,23 @@ def main():
                 )
                 raise SystemExit(1)
 
+            runtime_check = subprocess.run([
+                sys.executable, "runtime_answer_retention_v01015.py",
+                "--source", str(source),
+                "--candidate", str(current),
+                "--dataset", args.sleep_dataset,
+                "--benchmark", args.benchmark,
+                "--tokenizer", args.tokenizer,
+            ], check=False)
+
+            if runtime_check.returncode != 0:
+                print(
+                    "REPAIR> semantic and dataset-answer retention passed, "
+                    "but actual /internal runtime retention failed; "
+                    "candidate will not be promoted."
+                )
+                raise SystemExit(1)
+
             if current != candidate:
                 candidate.write_bytes(current.read_bytes())
             promote = subprocess.run([
@@ -56,7 +73,7 @@ def main():
                 "--candidate", str(candidate),
                 "--manifest", args.manifest,
                 "--retention-pass",
-                "--note", "v0.10.14 answer-preserving retention repair",
+                "--note", "v0.10.15 runtime-answer retention repair",
             ], check=False)
             raise SystemExit(promote.returncode)
 
