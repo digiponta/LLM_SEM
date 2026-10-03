@@ -128,22 +128,27 @@ def main() -> None:
             order.append(key)
         by_query[key] = row
 
-    for row in rows:
-        put(row)
-    for row in relations:
-        put(row)
-    for row in learned:
-        put(row)
-
-    merged = [by_query[key] for key in order]
-
-    # Fill unknown relation labels from exact/overlapping learned/base concept knowledge.
+    # Gather semantic labels before exact-query replacement.
     concept_labels: dict[str, str] = {}
-    for row in merged:
+    for row in rows + learned:
         if row["label"] == "unknown":
             continue
         for concept in row["concepts"]:
             concept_labels.setdefault(concept, row["label"])
+
+    # Base < learned human answer < canonical relation composition.
+    # The relation layer wins exact concept-definition queries because it
+    # represents the accumulated multi-fact knowledge after normalization.
+    for row in rows:
+        put(row)
+    for row in learned:
+        put(row)
+    for row in relations:
+        put(row)
+
+    merged = [by_query[key] for key in order]
+
+    # Fill unknown relation labels from learned/base concept knowledge.
 
     for row in merged:
         if row["label"] == "unknown":
