@@ -1,7 +1,8 @@
 # build_incremental_sleep_dataset_v01023.py
 #
 # LLM_SEM v0.10.23
-# Build a QA sleep dataset with failed/new concepts as train targets and\n# already-passing concepts as protected distillation anchors.
+# Build a QA sleep dataset with failed/new concepts as train targets and
+# already-passing concepts as protected distillation anchors.
 
 from __future__ import annotations
 
