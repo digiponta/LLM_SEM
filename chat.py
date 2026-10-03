@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.9 Sleep Answer Memorization
+# LLM_SEM v0.10.10 Degraded Retention
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -647,7 +647,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.9 Sleep Answer Memorization")
+    print(" LLM_SEM v0.10.10 Degraded Retention")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -689,7 +689,7 @@ def main() -> None:
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.9 runtime policy")
+    print("  /runtime              show v0.10.10 runtime policy")
     print("  /quit")
     print()
 
@@ -895,7 +895,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.10.9 Sleep Answer Memorization")
+            print("Runtime        : LLM_SEM v0.10.10 Degraded Retention")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
