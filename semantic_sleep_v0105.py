@@ -190,7 +190,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.28 Canonical-Aware Incremental Sleep")
+    print(" LLM_SEM v0.10.29 Sleep Training Trace")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -781,7 +781,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.28 canonical-aware incremental sleep",
+        "--note", "v0.10.29 sleep training trace",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
