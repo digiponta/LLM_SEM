@@ -44,6 +44,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sleep-target-min", type=float, default=0.60)
     p.add_argument("--sleep-min-improvement", type=float, default=0.01)
     p.add_argument("--sleep-max-stall-rounds", type=int, default=2)
+    p.add_argument("--sleep-min-termination-rate", type=float, default=1.0)
+    p.add_argument("--sleep-max-abnormal-ratio", type=float, default=0.02)
+    p.add_argument("--sleep-max-repetition-ratio", type=float, default=0.20)
     p.add_argument("--allow-cpu", action="store_true")
     return p.parse_args()
 
@@ -170,7 +173,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.11 Iterative Sleep Consolidation")
+    print(" LLM_SEM v0.10.12 Sleep Output Stabilization")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -266,6 +269,7 @@ def main() -> None:
                 "--train-blocks", str(args.qa_train_blocks),
                 "--min-generation-sim", "0.0",
                 "--result-json", str(result_json),
+                "--prefer-final-state",
             ]
             if args.allow_cpu:
                 qa_cmd.append("--allow-cpu")
@@ -293,6 +297,9 @@ def main() -> None:
             mean_sim = float(metrics.get("generation_similarity_mean", 0.0))
             min_sim = float(metrics.get("generation_similarity_min", 0.0))
             sem_cos = float(metrics.get("semantic_cosine", 0.0))
+            termination_rate = float(metrics.get("termination_rate", 0.0))
+            abnormal_ratio_max = float(metrics.get("abnormal_ratio_max", 1.0))
+            repetition_ratio_max = float(metrics.get("repetition_ratio_max", 1.0))
             improvement = (
                 mean_sim - previous_mean if previous_mean >= 0.0 else mean_sim
             )
@@ -301,6 +308,9 @@ def main() -> None:
                 "SLEEP> round result: "
                 f"mean={mean_sim:.6f} min={min_sim:.6f} "
                 f"semantic_cosine={sem_cos:.6f} "
+                f"termination={termination_rate:.3f} "
+                f"abnormal={abnormal_ratio_max:.3f} "
+                f"repetition={repetition_ratio_max:.3f} "
                 f"improvement={improvement:+.6f}"
             )
 
@@ -311,11 +321,20 @@ def main() -> None:
                 )
                 return
 
-            if internal_learning_complete(
-                mean_sim,
-                min_sim,
-                target_mean=args.sleep_target_mean,
-                target_min=args.sleep_target_min,
+            quality_ok = (
+                termination_rate >= args.sleep_min_termination_rate
+                and abnormal_ratio_max <= args.sleep_max_abnormal_ratio
+                and repetition_ratio_max <= args.sleep_max_repetition_ratio
+            )
+
+            if (
+                internal_learning_complete(
+                    mean_sim,
+                    min_sim,
+                    target_mean=args.sleep_target_mean,
+                    target_min=args.sleep_target_min,
+                )
+                and quality_ok
             ):
                 completed = True
                 last_round_checkpoint = out
