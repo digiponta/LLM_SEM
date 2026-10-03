@@ -50,6 +50,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sleep-min-termination-rate", type=float, default=1.0)
     p.add_argument("--sleep-max-abnormal-ratio", type=float, default=0.02)
     p.add_argument("--sleep-max-repetition-ratio", type=float, default=0.20)
+    p.add_argument("--incremental-distill-weight", type=float, default=8.0)
+    p.add_argument("--incremental-lr-scale", type=float, default=0.5)
+    p.add_argument("--incremental-train-blocks", type=int, default=1)
     p.add_argument("--allow-cpu", action="store_true")
     return p.parse_args()
 
@@ -186,7 +189,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.23 Incremental New-Knowledge Sleep")
+    print(" LLM_SEM v0.10.24 Protected Incremental Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -252,6 +255,7 @@ def main() -> None:
 
         current_source = Path(source_for_qa)
         qa_dataset_path = Path(args.sleep_dataset)
+        incremental_mode = False
         completed = False
         previous_mean = -1.0
         stall_rounds = 0
@@ -314,7 +318,11 @@ def main() -> None:
             )
             if incremental_code == 0:
                 qa_dataset_path = incremental_dataset
+                incremental_mode = True
                 print("SLEEP> incremental QA dataset:", qa_dataset_path)
+                print("SLEEP> protected distill weight:", args.incremental_distill_weight)
+                print("SLEEP> incremental LR scale    :", args.incremental_lr_scale)
+                print("SLEEP> incremental train blocks:", args.incremental_train_blocks)
             else:
                 raise RuntimeError(
                     "incremental sleep dataset could not be constructed "
@@ -338,6 +346,19 @@ def main() -> None:
                 )
                 print("=" * 96)
 
+                effective_lr = (
+                    args.qa_learning_rate * args.incremental_lr_scale
+                    if incremental_mode else args.qa_learning_rate
+                )
+                effective_lm_head_lr = (
+                    args.qa_lm_head_lr * args.incremental_lr_scale
+                    if incremental_mode else args.qa_lm_head_lr
+                )
+                effective_train_blocks = (
+                    args.incremental_train_blocks
+                    if incremental_mode else args.qa_train_blocks
+                )
+
                 qa_cmd = [
                     sys.executable,
                     "semantic_guided_answer_finetune_v097.py",
@@ -347,15 +368,20 @@ def main() -> None:
                     "--benchmark", args.benchmark,
                     "--output", str(out),
                     "--epochs", str(args.qa_epochs),
-                    "--learning-rate", str(args.qa_learning_rate),
-                    "--lm-head-lr", str(args.qa_lm_head_lr),
+                    "--learning-rate", str(effective_lr),
+                    "--lm-head-lr", str(effective_lm_head_lr),
                     "--preserve-weight", str(args.qa_preserve_weight),
-                    "--train-blocks", str(args.qa_train_blocks),
+                    "--train-blocks", str(effective_train_blocks),
                     "--min-generation-sim", "0.0",
                     "--result-json", str(result_json),
                     "--prefer-final-state",
                     "--concept-balanced",
                 ]
+                if incremental_mode:
+                    qa_cmd.extend([
+                        "--protected-distill-weight",
+                        str(args.incremental_distill_weight),
+                    ])
                 if args.allow_cpu:
                     qa_cmd.append("--allow-cpu")
 
@@ -598,7 +624,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.23 incremental new-knowledge sleep",
+        "--note", "v0.10.24 protected incremental sleep",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
