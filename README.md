@@ -4274,3 +4274,137 @@ CPUとは
 A PASS proves that semantic guidance reaches the generation path. It does not
 yet guarantee factual or fluent answers; output-quality improvement remains a
 separate model-training problem.
+
+
+## v0.9.7 Semantic-Guided Answer Fine-Tuning
+
+v0.9.6 proved that semantic guidance reaches the generation path, but output
+quality remained poor because the language model had never been trained on the
+semantic-guided prompt format.
+
+v0.9.7 fine-tunes the existing consolidated checkpoint on short supervised
+question/answer examples that use the same runtime prompt structure.
+
+Training flow:
+
+```text
+Semantic-guided prompt
+   |
+   v
+Answer-only LM loss
+   +
+Semantic preservation loss
+   |
+   v
+Fine-tuned answer model
+```
+
+Trainable parameters:
+
+```text
+final Transformer block : trainable, low LR
+final_norm              : trainable, low LR
+LM head                 : trainable, slightly higher LR
+embedding               : frozen
+earlier blocks          : frozen
+```
+
+The training set is:
+
+```text
+data/semantic_guided_qa_v097.json
+```
+
+It contains short definition-style examples across the existing semantic
+classes:
+
+```text
+computer
+science
+animal
+weather
+transport
+food
+```
+
+### Fine-tune
+
+Run:
+
+```powershell
+python semantic_guided_answer_finetune_v097.py
+```
+
+Defaults:
+
+```text
+source checkpoint   : model/model-sem-consolidation-v081.pt
+output checkpoint   : model/model-sem-guided-answer-v097.pt
+epochs              : 80
+semantic LR         : 5e-6
+LM-head LR          : 1e-5
+preserve weight     : 3.0
+holdout             : 20%
+```
+
+The loss is:
+
+```text
+answer-only next-token LM loss
++ 3.0 * semantic-vector preservation loss
+```
+
+Only answer tokens contribute to the QA language-model loss. The prompt itself
+is conditioning context rather than a prediction target.
+
+PASS requires:
+
+```text
+holdout QA NLL improves
+semantic benchmark cosine >= 0.98
+```
+
+### Evaluate generated answers
+
+After training:
+
+```powershell
+python run_semantic_guided_answer_eval_v097.py
+```
+
+This compares source and candidate outputs side by side for representative
+queries and also reports semantic routing retention.
+
+### Validate consolidated Semantic Memory
+
+Before promoting the candidate:
+
+```powershell
+python consolidated_retention_v094.py \
+  --source model/model-sem-consolidation-v081.pt \
+  --candidate model/model-sem-guided-answer-v097.pt
+```
+
+Promotion should happen only if both answer evaluation and consolidated-memory
+retention are acceptable.
+
+### Promote after validation
+
+```powershell
+python promote_active_model_v094.py \
+  --candidate model/model-sem-guided-answer-v097.pt \
+  --retention-pass \
+  --note "v0.9.7 semantic-guided answer fine-tuning validated"
+```
+
+After promotion:
+
+```powershell
+python chat.py
+```
+
+automatically loads the fine-tuned checkpoint through
+`model/active-model.json`.
+
+This stage aims to improve answer generation without discarding the semantic
+knowledge already consolidated into the model.
