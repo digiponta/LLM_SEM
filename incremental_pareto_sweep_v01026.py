@@ -1,6 +1,6 @@
 # incremental_pareto_sweep_v01026.py
 #
-# LLM_SEM v0.10.27
+# LLM_SEM v0.10.28
 # Independent protected-incremental candidates using actual /internal replay anchors.
 # Select only a candidate that passes the full actual /internal runtime gate.
 
@@ -43,18 +43,18 @@ def main():
     output.parent.mkdir(parents=True, exist_ok=True)
 
     # Search around the v0.10.24 near-pass region.
-    # (epochs, lr_scale, distillation_weight)
+    # (epochs, lr_scale, distillation_weight, new_knowledge_weight)
     configs = [
-        (240, 0.50, 2.0),
-        (240, 0.50, 4.0),
-        (320, 0.50, 4.0),
-        (320, 0.50, 6.0),
-        (480, 0.40, 4.0),
-        (480, 0.50, 6.0),
+        (240, 0.50, 1.0, 2.0),
+        (240, 0.50, 2.0, 2.0),
+        (320, 0.50, 1.0, 3.0),
+        (320, 0.50, 2.0, 3.0),
+        (480, 0.40, 1.0, 4.0),
+        (480, 0.50, 2.0, 4.0),
     ]
 
     print("=" * 104)
-    print(" LLM_SEM v0.10.27 Runtime-Replay Pareto Sweep")
+    print(" LLM_SEM v0.10.28 Canonical-Aware / New-Knowledge-Boost Sweep")
     print("=" * 104)
     print("Source             :", source)
     print("Incremental dataset:", args.incremental_dataset)
@@ -64,7 +64,7 @@ def main():
     safe = []
     best = None
 
-    for idx, (epochs, lr_scale, distill) in enumerate(configs, 1):
+    for idx, (epochs, lr_scale, distill, new_weight) in enumerate(configs, 1):
         candidate = output.with_name(
             f"{output.stem}.sweep{idx}{output.suffix}"
         )
@@ -83,7 +83,7 @@ def main():
         print(
             f"SWEEP {idx}/{len(configs)} "
             f"epochs={epochs} lr_scale={lr_scale:.2f} "
-            f"distill={distill:.1f}"
+            f"distill={distill:.1f} new_weight={new_weight:.1f}"
         )
 
         train_cmd = [
@@ -100,6 +100,7 @@ def main():
             "--preserve-weight", str(args.preserve_weight),
             "--train-blocks", str(args.train_blocks),
             "--protected-distill-weight", str(distill),
+            "--new-knowledge-weight", str(new_weight),
             "--min-generation-sim", "0.0",
             "--result-json", str(train_json),
             "--prefer-final-state",
@@ -150,6 +151,7 @@ def main():
             "epochs": epochs,
             "lr_scale": lr_scale,
             "distill": distill,
+            "new_knowledge_weight": new_weight,
             "known_failures": known,
             "new_failures": new,
             "failures": failures,
