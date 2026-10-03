@@ -16,6 +16,7 @@ from model import LanguageModel
 from semantic_eval import load_benchmark
 from semantic_router import SemanticRouter
 from tokenizer import Tokenizer
+from semantic_guided_answer_finetune_v097 import load_dataset, answer_lm_loss
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,12 +26,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--memory", default="data/semantic_memory.jsonl")
     p.add_argument("--tokenizer", default="model/tokenizer.json")
     p.add_argument("--benchmark", default="my_benchmark.csv")
+    p.add_argument("--sleep-dataset", default="data/semantic_sleep_qa_v0106.json")
     p.add_argument("--epochs", type=int, default=80)
     p.add_argument("--learning-rate", type=float, default=3e-6)
     p.add_argument("--target-weight", type=float, default=6.0)
     p.add_argument("--benchmark-weight", type=float, default=1.0)
     p.add_argument("--preserve-weight", type=float, default=6.0)
     p.add_argument("--consolidated-weight", type=float, default=3.0)
+    p.add_argument("--answer-preserve-weight", type=float, default=2.0)
     p.add_argument("--alpha", type=float, default=0.35)
     p.add_argument("--temperature", type=float, default=0.06)
     p.add_argument("--allow-cpu", action="store_true")
@@ -70,6 +73,8 @@ def main() -> None:
         row for row in load_semantic_memory_records(Path(args.memory))
         if row.get("status") == "CONSOLIDATED"
     ]
+    sleep_rows = load_dataset(Path(args.sleep_dataset))
+    mandatory_rows = [row for row in sleep_rows if bool(row.get("must_train", False))]
 
     teacher, ckpt = LanguageModel.load_checkpoint(args.model, device=device)
     student, _ = LanguageModel.load_checkpoint(args.model, device=device)
@@ -95,6 +100,8 @@ def main() -> None:
     print("Source loss         :", ckpt.get("loss"))
     print("Consolidated records:", len(consolidated))
     print("Damaged records     :", len(damaged))
+    print("Mandatory QA protect:", len(mandatory_rows))
+    print("Answer preserve wt  :", args.answer_preserve_weight)
 
     if not damaged:
         Path(args.output).write_bytes(Path(args.model).read_bytes())
@@ -198,12 +205,22 @@ def main() -> None:
         bench_loss = torch.stack(bench_losses).mean()
         preserve_loss = torch.stack(preserve_losses).mean()
         consolidated_loss = torch.stack(consolidated_losses).mean()
+        answer_preserve_losses = [
+            answer_lm_loss(student, tokenizer, row, device)
+            for row in mandatory_rows
+        ]
+        answer_preserve_loss = (
+            torch.stack(answer_preserve_losses).mean()
+            if answer_preserve_losses
+            else torch.tensor(0.0, device=device)
+        )
 
         total = (
             args.target_weight * target_loss
             + args.benchmark_weight * bench_loss
             + args.preserve_weight * preserve_loss
             + args.consolidated_weight * consolidated_loss
+            + args.answer_preserve_weight * answer_preserve_loss
         )
         total.backward()
         torch.nn.utils.clip_grad_norm_(trainable, 1.0)
@@ -216,7 +233,8 @@ def main() -> None:
                 f"total={float(total.item()):.6f} "
                 f"target={float(target_loss.item()):.6f} "
                 f"benchmark={float(bench_loss.item()):.6f} "
-                f"preserve={float(preserve_loss.item()):.6f}"
+                f"preserve={float(preserve_loss.item()):.6f} "
+                f"answer={float(answer_preserve_loss.item()):.6f}"
             )
 
     out = Path(args.output)
