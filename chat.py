@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.9.6 Semantic-Guided Answer Generation
+# LLM_SEM v0.9.7 Semantic-Guided Answer Fine-Tuning Runtime
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -613,7 +613,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.9.6 Semantic-Guided Answer Generation")
+    print(" LLM_SEM v0.9.7 Semantic-Guided Answer Fine-Tuning Runtime")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -644,7 +644,7 @@ def main() -> None:
     print("  /teach <label>       teach the previous user utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.9.6 runtime policy")
+    print("  /runtime              show v0.9.7 runtime policy")
     print("  /quit")
     print()
 
@@ -724,7 +724,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.9.6 Semantic-Guided Answer Generation")
+            print("Runtime        : LLM_SEM v0.9.7 Semantic-Guided Answer Fine-Tuning Runtime")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
