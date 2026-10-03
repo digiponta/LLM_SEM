@@ -426,14 +426,52 @@ def main() -> None:
             retention_cmd.append("--allow-cpu")
         run_step(retention_cmd, "consolidated retention validation")
 
-    # Stage E: Promote only after iterative completion + validation.
+    # Stage E: Answer/runtime/multi-knowledge retention gates.
+    answer_retention_cmd = [
+        sys.executable,
+        "answer_retention_v01014.py",
+        "--source", str(source),
+        "--candidate", str(final_candidate),
+        "--dataset", args.sleep_dataset,
+        "--tokenizer", args.tokenizer,
+    ]
+    if args.allow_cpu:
+        answer_retention_cmd.append("--allow-cpu")
+    run_step(answer_retention_cmd, "dataset answer retention")
+
+    runtime_retention_cmd = [
+        sys.executable,
+        "runtime_answer_retention_v01015.py",
+        "--source", str(source),
+        "--candidate", str(final_candidate),
+        "--dataset", args.sleep_dataset,
+        "--benchmark", args.benchmark,
+        "--tokenizer", args.tokenizer,
+    ]
+    if args.allow_cpu:
+        runtime_retention_cmd.append("--allow-cpu")
+    run_step(runtime_retention_cmd, "runtime /internal answer retention")
+
+    multi_knowledge_cmd = [
+        sys.executable,
+        "multi_knowledge_internalization_v01016.py",
+        "--model", str(final_candidate),
+        "--dataset", args.sleep_dataset,
+        "--benchmark", args.benchmark,
+        "--tokenizer", args.tokenizer,
+    ]
+    if args.allow_cpu:
+        multi_knowledge_cmd.append("--allow-cpu")
+    run_step(multi_knowledge_cmd, "multi-knowledge internalization")
+
+    # Stage F: Promote only after every retention/internalization gate.
     promote_cmd = [
         sys.executable,
         "promote_active_model_v094.py",
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.11 iterative /sleep consolidation",
+        "--note", "v0.10.16 multi-knowledge internalization",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
