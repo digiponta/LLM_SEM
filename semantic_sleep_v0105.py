@@ -23,7 +23,7 @@ from adaptive_semantic_learning import (
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="LLM_SEM v0.10.6 full semantic sleep")
+    p = argparse.ArgumentParser(description="LLM_SEM v0.10.9 full semantic sleep with answer memorization")
     p.add_argument("--memory", default="data/semantic_memory.jsonl")
     p.add_argument("--model", required=True)
     p.add_argument("--tokenizer", default="model/tokenizer.json")
@@ -36,7 +36,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--relation-memory", default="data/relation_memory_v0101.jsonl")
     p.add_argument("--sleep-dataset", default="data/semantic_sleep_qa_v0106.json")
     p.add_argument("--epochs", type=int, default=80)
-    p.add_argument("--qa-epochs", type=int, default=80)
+    p.add_argument("--qa-epochs", type=int, default=240)
+    p.add_argument("--qa-learning-rate", type=float, default=1e-5)
+    p.add_argument("--qa-lm-head-lr", type=float, default=5e-5)
+    p.add_argument("--qa-preserve-weight", type=float, default=5.0)
+    p.add_argument("--qa-train-blocks", type=int, default=2)
+    p.add_argument("--qa-min-generation-sim", type=float, default=0.35)
     p.add_argument("--allow-cpu", action="store_true")
     return p.parse_args()
 
@@ -126,7 +131,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.6 Full Sleep Consolidation")
+    print(" LLM_SEM v0.10.9 Sleep Answer Memorization")
     print("=" * 96)
     print("Source model       :", source)
     print("Semantic candidate :", semantic_candidate)
@@ -196,6 +201,11 @@ def main() -> None:
             "--benchmark", args.benchmark,
             "--output", str(final_candidate),
             "--epochs", str(args.qa_epochs),
+            "--learning-rate", str(args.qa_learning_rate),
+            "--lm-head-lr", str(args.qa_lm_head_lr),
+            "--preserve-weight", str(args.qa_preserve_weight),
+            "--train-blocks", str(args.qa_train_blocks),
+            "--min-generation-sim", str(args.qa_min_generation_sim),
             "--require-pass",
         ]
         if args.allow_cpu:
