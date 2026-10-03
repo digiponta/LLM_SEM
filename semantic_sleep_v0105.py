@@ -186,7 +186,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.22 Retention-First / No-Op Sleep")
+    print(" LLM_SEM v0.10.23 Incremental New-Knowledge Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -251,6 +251,7 @@ def main() -> None:
         run_step(build_cmd, "build canonical sleep QA dataset")
 
         current_source = Path(source_for_qa)
+        qa_dataset_path = Path(args.sleep_dataset)
         completed = False
         previous_mean = -1.0
         stall_rounds = 0
@@ -295,8 +296,30 @@ def main() -> None:
         elif precheck_code == 1:
             print(
                 "SLEEP> retention-first precheck FAIL: at least one concept "
-                "needs learning; continue with Balanced QA sleep."
+                "needs learning; build incremental-only QA dataset."
             )
+            incremental_dataset = final_candidate.with_name(
+                f"{final_candidate.stem}.incremental.json"
+            )
+            incremental_cmd = [
+                sys.executable,
+                "build_incremental_sleep_dataset_v01023.py",
+                "--dataset", args.sleep_dataset,
+                "--precheck", str(precheck_json),
+                "--output", str(incremental_dataset),
+            ]
+            incremental_code = run_step_code(
+                incremental_cmd,
+                "build incremental new-knowledge QA dataset",
+            )
+            if incremental_code == 0:
+                qa_dataset_path = incremental_dataset
+                print("SLEEP> incremental QA dataset:", qa_dataset_path)
+            else:
+                raise RuntimeError(
+                    "incremental sleep dataset could not be constructed "
+                    f"(exit code {incremental_code})"
+                )
         else:
             raise RuntimeError(
                 f"retention-first precheck failed with exit code {precheck_code}"
@@ -320,7 +343,7 @@ def main() -> None:
                     "semantic_guided_answer_finetune_v097.py",
                     "--model", str(current_source),
                     "--tokenizer", args.tokenizer,
-                    "--dataset", args.sleep_dataset,
+                    "--dataset", str(qa_dataset_path),
                     "--benchmark", args.benchmark,
                     "--output", str(out),
                     "--epochs", str(args.qa_epochs),
@@ -575,7 +598,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.22 retention-first no-op sleep",
+        "--note", "v0.10.23 incremental new-knowledge sleep",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
