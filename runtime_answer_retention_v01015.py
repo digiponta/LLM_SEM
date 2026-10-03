@@ -31,7 +31,7 @@ from tokenizer import Tokenizer
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.15 Runtime Answer Retention"
+        description="LLM_SEM v0.10.18 Improvement-Aware Runtime Answer Retention"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--candidate", required=True)
@@ -41,6 +41,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--alpha", type=float, default=0.35)
     p.add_argument("--min-source-candidate-sim", type=float, default=0.70)
     p.add_argument("--max-canonical-drop", type=float, default=0.05)
+    p.add_argument("--known-canonical-threshold", type=float, default=0.70)
+    p.add_argument("--min-improvement-gain", type=float, default=0.10)
+    p.add_argument("--min-improved-canonical", type=float, default=0.70)
     p.add_argument("--max-abnormal-ratio", type=float, default=0.02)
     p.add_argument("--max-repetition-ratio", type=float, default=0.20)
     p.add_argument("--allow-cpu", action="store_true")
@@ -156,7 +159,7 @@ def main() -> None:
     candidate_router.fit(benchmark)
 
     print("=" * 104)
-    print(" LLM_SEM v0.10.15 Runtime /internal Answer Retention")
+    print(" LLM_SEM v0.10.18 Improvement-Aware Runtime /internal Retention")
     print("=" * 104)
     print("Source checkpoint   :", args.source)
     print("Candidate checkpoint:", args.candidate)
@@ -166,6 +169,9 @@ def main() -> None:
         args.min_source_candidate_sim,
     )
     print("Max canonical drop  :", args.max_canonical_drop)
+    print("Known canonical th  :", args.known_canonical_threshold)
+    print("Min improvement gain:", args.min_improvement_gain)
+    print("Min improved canon. :", args.min_improved_canonical)
 
     failures = 0
     source_canonical_vals = []
@@ -193,24 +199,46 @@ def main() -> None:
         source_canonical = ratio(source_answer, canonical)
         candidate_canonical = ratio(candidate_answer, canonical)
         canonical_drop = source_canonical - candidate_canonical
+        canonical_gain = candidate_canonical - source_canonical
         quality = generation_quality(candidate_answer)
 
         pair_vals.append(pair_sim)
         source_canonical_vals.append(source_canonical)
         candidate_canonical_vals.append(candidate_canonical)
 
-        ok = (
-            pair_sim >= args.min_source_candidate_sim
-            and canonical_drop <= args.max_canonical_drop
-            and bool(quality["terminated"])
+        quality_ok = (
+            bool(quality["terminated"])
             and float(quality["abnormal_ratio"]) <= args.max_abnormal_ratio
             and float(quality["repetition_ratio"]) <= args.max_repetition_ratio
         )
+
+        source_is_known = (
+            source_canonical >= args.known_canonical_threshold
+        )
+        improvement_ok = (
+            not source_is_known
+            and canonical_gain >= args.min_improvement_gain
+            and candidate_canonical >= args.min_improved_canonical
+        )
+        retention_ok = (
+            source_is_known
+            and pair_sim >= args.min_source_candidate_sim
+            and canonical_drop <= args.max_canonical_drop
+        )
+
+        if improvement_ok:
+            mode = "IMPROVEMENT"
+            ok = quality_ok
+        else:
+            mode = "RETENTION"
+            ok = retention_ok and quality_ok
+
         failures += int(not ok)
 
         print()
         print(
-            f"{index:02d}. [{'PASS' if ok else 'FAIL'}] query={query!r}"
+            f"{index:02d}. [{'PASS' if ok else 'FAIL'}] "
+            f"mode={mode} query={query!r}"
         )
         print(
             f"    route      : {source_label} ({source_margin:+.6f})"
@@ -220,7 +248,7 @@ def main() -> None:
             f"    source/cand: {pair_sim:.6f}  "
             f"canonical: {source_canonical:.6f}"
             f" -> {candidate_canonical:.6f} "
-            f"drop={canonical_drop:+.6f}"
+            f"drop={canonical_drop:+.6f} gain={canonical_gain:+.6f}"
         )
         print(
             "    quality    : "
@@ -248,6 +276,10 @@ def main() -> None:
         f"{source_canonical_mean:.6f} -> {candidate_canonical_mean:.6f}",
     )
     print("Per-probe failures               :", failures)
+    print(
+        "Policy                           :",
+        "preserve known answers; allow canonical-improving new knowledge",
+    )
     result = failures == 0
     print("RESULT                           :", "PASS" if result else "FAIL")
 
