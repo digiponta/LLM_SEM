@@ -4649,3 +4649,51 @@ gate_reason=answer-memory score=23.00 reason=query-exact,label,intent,concept,co
 
 This makes the runtime decision, displayed gate state, and displayed reason
 consistent.
+
+## v0.10.0 LLM_TRY Feature Integration
+
+v0.10.0 integrates the LLM_TRY v10.5.x-v10.9.1 ideas that fit the LLM_SEM architecture.
+
+Integrated mappings:
+
+- Persistent adaptive knowledge -> persistent Semantic/Answer Memory JSONL
+- Bare Concept Gate -> bare-concept variants in unified Answer Memory
+- Stability Replay -> semantic-preservation loss
+- Quality-aware checkpoint selection -> best holdout NLL with semantic cosine >= 0.98
+- Semantic proposition merge -> unified semantic answer-memory builder
+- Relation fact lookup -> outgoing/incoming relation rendering
+- Unified Semantic Memory -> multiple Answer Memory sources loaded together
+- Adaptive-state-aware routing -> Answer-Aware Gate + persistent learned answers
+
+Build unified memory:
+
+    python build_unified_semantic_answer_memory_v0100.py
+
+Default output:
+
+    data/unified_semantic_answer_memory_v0100.jsonl
+
+Runtime answer-memory sources:
+
+    data/semantic_guided_qa_v097.json
+    data/unified_semantic_answer_memory_v0100.jsonl
+    data/semantic_answer_memory_learned.jsonl
+
+New chat command:
+
+    /teach-answer <trusted answer>
+
+Example:
+
+    You> ブラックホールとは
+    You> /teach-answer ブラックホールは強い重力を持つ天体です。
+
+The learned answer is available immediately and survives restart.
+
+Relation facts such as 文学 --includes--> 数学 are rendered in both directions without inventing a reverse definition.
+
+Regression:
+
+    python run_llm_try_feature_integration_v0100.py
+
+The regression checks bare-concept variants, relation rendering, multi-memory loading, Answer-Aware Gate promotion, persistent answer teaching, and restart-safe reload.
