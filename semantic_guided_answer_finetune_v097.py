@@ -57,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--holdout", type=float, default=0.20)
     p.add_argument("--allow-cpu", action="store_true")
     p.add_argument("--require-pass", action="store_true")
+    p.add_argument("--train-blocks", type=int, default=1)
     return p.parse_args()
 
 
@@ -78,6 +79,9 @@ def load_dataset(path: Path) -> list[dict]:
                 "intent": intent or None,
                 "concepts": concepts,
                 "truth_status": truth,
+                "sleep_source": str(row.get("sleep_source", row.get("source", "base"))),
+                "sleep_weight": float(row.get("sleep_weight", 1.0)),
+                "must_train": bool(row.get("must_train", False)),
             })
     if not rows:
         raise RuntimeError("No valid QA rows.")
@@ -86,27 +90,40 @@ def load_dataset(path: Path) -> list[dict]:
 
 def split_rows(rows: list[dict], holdout: float, seed: int):
     rng = random.Random(seed)
-    rows = list(rows)
-    rng.shuffle(rows)
-    n_test = max(1, int(round(len(rows) * holdout)))
-    n_test = min(n_test, len(rows) - 1)
-    return rows[n_test:], rows[:n_test]
+    mandatory = [row for row in rows if bool(row.get("must_train", False))]
+    optional = [row for row in rows if not bool(row.get("must_train", False))]
+    rng.shuffle(optional)
+
+    if len(optional) <= 1:
+        return mandatory + optional, []
+
+    n_test = max(1, int(round(len(optional) * holdout)))
+    n_test = min(n_test, len(optional) - 1)
+    test_rows = optional[:n_test]
+    train_rows = mandatory + optional[n_test:]
+    return train_rows, test_rows
 
 
-def configure_trainable(model: LanguageModel):
+def configure_trainable(model: LanguageModel, train_blocks: int = 1):
     for p in model.parameters():
         p.requires_grad = False
 
-    for p in model.blocks[-1].parameters():
-        p.requires_grad = True
+    n_blocks = max(1, min(int(train_blocks), len(model.blocks)))
+    for block in model.blocks[-n_blocks:]:
+        for p in block.parameters():
+            p.requires_grad = True
     for p in model.final_norm.parameters():
         p.requires_grad = True
     for p in model.lm_head.parameters():
         p.requires_grad = True
 
     semantic_params = [
-        p for p in list(model.blocks[-1].parameters()) + list(model.final_norm.parameters())
+        p
+        for block in model.blocks[-n_blocks:]
+        for p in block.parameters()
         if p.requires_grad
+    ] + [
+        p for p in model.final_norm.parameters() if p.requires_grad
     ]
     lm_head_params = [p for p in model.lm_head.parameters() if p.requires_grad]
     return semantic_params, lm_head_params
@@ -231,7 +248,7 @@ def main() -> None:
     for p in teacher.parameters():
         p.requires_grad = False
 
-    semantic_params, lm_head_params = configure_trainable(student)
+    semantic_params, lm_head_params = configure_trainable(student, args.train_blocks)
 
     teacher_vectors = {
         row.text: semantic_vector(
@@ -262,9 +279,10 @@ def main() -> None:
     print("Output checkpoint   :", args.output)
     print("QA samples          :", len(rows))
     print("Train samples       :", len(train_rows))
+    print("Mandatory sleep rows:", sum(int(bool(r.get("must_train", False))) for r in train_rows))
     print("Holdout samples     :", len(test_rows))
     print("Benchmark samples   :", len(benchmark))
-    print("Trainable semantic  : final block + final_norm")
+    print("Trainable semantic  :", f"last {args.train_blocks} block(s) + final_norm")
     print("Trainable LM head   : True")
     print("Semantic LR         :", args.learning_rate)
     print("LM-head LR          :", args.lm_head_lr)
@@ -283,11 +301,16 @@ def main() -> None:
         student.train()
         optimizer.zero_grad(set_to_none=True)
 
-        qa_losses = [
-            answer_lm_loss(student, tokenizer, row, device)
-            for row in train_rows
+        qa_losses = []
+        qa_weights = []
+        for row in train_rows:
+            qa_losses.append(answer_lm_loss(student, tokenizer, row, device))
+            qa_weights.append(max(0.01, float(row.get("sleep_weight", 1.0))))
+        weighted = [
+            loss * weight
+            for loss, weight in zip(qa_losses, qa_weights)
         ]
-        qa_loss = torch.stack(qa_losses).mean()
+        qa_loss = torch.stack(weighted).sum() / sum(qa_weights)
 
         preserve_losses = []
         for row in benchmark:
