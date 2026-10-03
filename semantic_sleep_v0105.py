@@ -53,6 +53,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--incremental-distill-weight", type=float, default=8.0)
     p.add_argument("--incremental-lr-scale", type=float, default=0.5)
     p.add_argument("--incremental-train-blocks", type=int, default=1)
+    p.add_argument("--incremental-chunk-epochs", type=int, default=40)
     p.add_argument("--allow-cpu", action="store_true")
     return p.parse_args()
 
@@ -189,7 +190,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.24 Protected Incremental Sleep")
+    print(" LLM_SEM v0.10.25 Runtime-Constrained Incremental Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -261,6 +262,9 @@ def main() -> None:
         stall_rounds = 0
         last_metrics: dict = {}
         last_round_checkpoint: Path | None = None
+        best_safe_checkpoint: Path | None = None
+        best_safe_new_failures = 10**9
+        best_safe_canonical_mean = -1.0
 
         precheck_json = final_candidate.with_name(
             f"{final_candidate.stem}.precheck.json"
@@ -358,6 +362,10 @@ def main() -> None:
                     args.incremental_train_blocks
                     if incremental_mode else args.qa_train_blocks
                 )
+                effective_epochs = (
+                    args.incremental_chunk_epochs
+                    if incremental_mode else args.qa_epochs
+                )
 
                 qa_cmd = [
                     sys.executable,
@@ -367,7 +375,7 @@ def main() -> None:
                     "--dataset", str(qa_dataset_path),
                     "--benchmark", args.benchmark,
                     "--output", str(out),
-                    "--epochs", str(args.qa_epochs),
+                    "--epochs", str(effective_epochs),
                     "--learning-rate", str(effective_lr),
                     "--lm-head-lr", str(effective_lm_head_lr),
                     "--preserve-weight", str(args.qa_preserve_weight),
@@ -435,6 +443,98 @@ def main() -> None:
                     )
                     return
 
+                if incremental_mode:
+                    runtime_json = final_candidate.with_name(
+                        f"{final_candidate.stem}.round{round_index}.runtime.json"
+                    )
+                    runtime_cmd = [
+                        sys.executable,
+                        "runtime_answer_retention_v01015.py",
+                        "--source", str(source),
+                        "--candidate", str(out),
+                        "--dataset", args.sleep_dataset,
+                        "--benchmark", args.benchmark,
+                        "--tokenizer", args.tokenizer,
+                        "--result-json", str(runtime_json),
+                    ]
+                    if args.allow_cpu:
+                        runtime_cmd.append("--allow-cpu")
+
+                    runtime_code = run_step_code(
+                        runtime_cmd,
+                        f"full runtime checkpoint validation round {round_index}",
+                    )
+                    if not runtime_json.exists():
+                        raise RuntimeError(
+                            f"runtime checkpoint validation did not create {runtime_json}"
+                        )
+                    runtime_metrics = json.loads(
+                        runtime_json.read_text(encoding="utf-8")
+                    )
+                    known_failures = int(
+                        runtime_metrics.get("known_failures", 10**9)
+                    )
+                    new_failures = int(
+                        runtime_metrics.get("new_failures", 10**9)
+                    )
+                    runtime_mean = float(
+                        runtime_metrics.get("candidate_canonical_mean", 0.0)
+                    )
+
+                    print(
+                        "SLEEP> runtime checkpoint: "
+                        f"known_failures={known_failures} "
+                        f"new_failures={new_failures} "
+                        f"canonical_mean={runtime_mean:.6f}"
+                    )
+
+                    safe = known_failures == 0
+                    better_safe = (
+                        safe
+                        and (
+                            new_failures < best_safe_new_failures
+                            or (
+                                new_failures == best_safe_new_failures
+                                and runtime_mean > best_safe_canonical_mean
+                            )
+                        )
+                    )
+                    if better_safe:
+                        best_safe_checkpoint = out
+                        best_safe_new_failures = new_failures
+                        best_safe_canonical_mean = runtime_mean
+                        print(
+                            "SLEEP> BEST SAFE CHECKPOINT:",
+                            out,
+                            f"(new_failures={new_failures}, "
+                            f"canonical_mean={runtime_mean:.6f})",
+                        )
+
+                    if runtime_code == 0:
+                        completed = True
+                        last_round_checkpoint = out
+                        print(
+                            "SLEEP> FULL RUNTIME PASS at incremental round "
+                            f"{round_index}; checkpoint selected."
+                        )
+                        break
+
+                    if known_failures > 0:
+                        print(
+                            "SLEEP> protected knowledge regression detected; "
+                            "this checkpoint will NOT become the next training source."
+                        )
+                        if best_safe_checkpoint is not None:
+                            current_source = best_safe_checkpoint
+                        else:
+                            current_source = Path(source_for_qa)
+                        continue
+
+                    # Safe checkpoint: advance from it even if the new concept
+                    # still needs more learning.
+                    current_source = out
+                    last_round_checkpoint = out
+
                 quality_ok = (
                     termination_rate >= args.sleep_min_termination_rate
                     and abnormal_ratio_max <= args.sleep_max_abnormal_ratio
@@ -442,7 +542,8 @@ def main() -> None:
                 )
 
                 if (
-                    internal_learning_complete(
+                    not incremental_mode
+                    and internal_learning_complete(
                         mean_sim,
                         min_sim,
                         target_mean=args.sleep_target_mean,
@@ -476,14 +577,27 @@ def main() -> None:
                     return
 
                 previous_mean = mean_sim
-                current_source = out
-                last_round_checkpoint = out
+                if not incremental_mode:
+                    current_source = out
+                    last_round_checkpoint = out
 
         if not completed:
-            print(
-                "SLEEP> STOP: maximum rounds reached before internal-learning "
-                "completion criteria were satisfied."
-            )
+            if incremental_mode and best_safe_checkpoint is not None:
+                print(
+                    "SLEEP> STOP: no checkpoint passed the full runtime gate "
+                    "within the incremental search budget."
+                )
+                print(
+                    "SLEEP> best safe checkpoint retained for diagnostics:",
+                    best_safe_checkpoint,
+                    f"new_failures={best_safe_new_failures}",
+                    f"canonical_mean={best_safe_canonical_mean:.6f}",
+                )
+            else:
+                print(
+                    "SLEEP> STOP: maximum rounds reached before internal-learning "
+                    "completion criteria were satisfied."
+                )
             if last_metrics:
                 print(
                     "SLEEP> final metrics: "
@@ -624,7 +738,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.24 protected incremental sleep",
+        "--note", "v0.10.25 runtime-constrained incremental sleep",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
