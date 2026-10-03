@@ -1,0 +1,106 @@
+{
+  "schema_version": "0.9.1",
+  "description": "Controlled seed dataset for Truth-State Projection. Labels are explicit supervision, not claims inferred by the model.",
+  "samples": [
+    {
+      "text": "地球は太陽の周りを公転する",
+      "truth_status": "TRUE"
+    },
+    {
+      "text": "水は標準大気圧で約100度で沸騰する",
+      "truth_status": "TRUE"
+    },
+    {
+      "text": "月は地球の衛星である",
+      "truth_status": "TRUE"
+    },
+    {
+      "text": "光速は真空中で有限である",
+      "truth_status": "TRUE"
+    },
+    {
+      "text": "DNAは遺伝情報を担う",
+      "truth_status": "TRUE"
+    },
+    {
+      "text": "太陽は地球の周りを公転する",
+      "truth_status": "FALSE"
+    },
+    {
+      "text": "地球は平面である",
+      "truth_status": "FALSE"
+    },
+    {
+      "text": "月は自ら可視光を発して輝いている",
+      "truth_status": "FALSE"
+    },
+    {
+      "text": "真空中の光速は無限大である",
+      "truth_status": "FALSE"
+    },
+    {
+      "text": "DNAは金属でできている",
+      "truth_status": "FALSE"
+    },
+    {
+      "text": "量子力学の解釈は一つに完全統一されている",
+      "truth_status": "CONTESTED"
+    },
+    {
+      "text": "意識の本質は現在完全に解明されている",
+      "truth_status": "CONTESTED"
+    },
+    {
+      "text": "人工知能に意識があるかどうかは決着している",
+      "truth_status": "CONTESTED"
+    },
+    {
+      "text": "宇宙の始まり以前について単一の説明が確立している",
+      "truth_status": "CONTESTED"
+    },
+    {
+      "text": "量子測定問題の解釈には議論がある",
+      "truth_status": "CONTESTED"
+    },
+    {
+      "text": "この新しい材料は室温超伝導を示す",
+      "truth_status": "UNVERIFIED"
+    },
+    {
+      "text": "未公開の実験で新粒子が発見された",
+      "truth_status": "UNVERIFIED"
+    },
+    {
+      "text": "この未査読研究の結論は正しい",
+      "truth_status": "UNVERIFIED"
+    },
+    {
+      "text": "匿名情報による新発見は確認済みである",
+      "truth_status": "UNVERIFIED"
+    },
+    {
+      "text": "この観測結果はまだ再現確認されていない",
+      "truth_status": "UNVERIFIED"
+    },
+    {
+      "text": "冥王星は太陽系の第九惑星である",
+      "truth_status": "OUTDATED"
+    },
+    {
+      "text": "太陽系の惑星は九個である",
+      "truth_status": "OUTDATED"
+    },
+    {
+      "text": "コンピュータの記憶媒体はフロッピーディスクが主流である",
+      "truth_status": "OUTDATED"
+    },
+    {
+      "text": "インターネット接続はダイヤルアップが一般的である",
+      "truth_status": "OUTDATED"
+    },
+    {
+      "text": "携帯電話は音声通話だけに使われる",
+      "truth_status": "OUTDATED"
+    }
+  ]
+}
