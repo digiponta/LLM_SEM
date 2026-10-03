@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.12 Sleep Output Stabilization
+# LLM_SEM v0.10.13 Sleep Retention Repair
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -114,8 +114,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--relation-memory", default=DEFAULT_RELATION_MEMORY)
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument("--answer-gate-min-score", type=float, default=12.0)
-    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0112.pt")
-    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0112.pt")
+    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0113.pt")
+    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0113.pt")
     p.add_argument("--sleep-qa-epochs", type=int, default=240)
     p.add_argument("--sleep-epochs", type=int, default=80)
     p.add_argument("--sleep-max-rounds", type=int, default=5)
