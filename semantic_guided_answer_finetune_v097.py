@@ -93,6 +93,8 @@ def load_dataset(path: Path) -> list[dict]:
                 "sleep_weight": float(row.get("sleep_weight", 1.0)),
                 "must_train": bool(row.get("must_train", False)),
                 "protected": bool(row.get("protected", False)),
+                "runtime_prompt": str(row.get("runtime_prompt", "")),
+                "runtime_selected_label": str(row.get("runtime_selected_label", "")),
             })
     if not rows:
         raise RuntimeError("No valid QA rows.")
@@ -225,6 +227,9 @@ def configure_trainable(model: LanguageModel, train_blocks: int = 1):
 
 
 def build_prompt(row: dict) -> str:
+    runtime_prompt = str(row.get("runtime_prompt", "")).strip()
+    if runtime_prompt:
+        return runtime_prompt
     return build_semantic_generation_prompt(
         row["query"],
         selected_label=row["label"],
@@ -283,6 +288,54 @@ def semantic_vector(
         normalize_hybrid=False,
     )[0]
 
+
+
+@torch.no_grad()
+def align_must_train_runtime_prompts(
+    teacher: LanguageModel,
+    tokenizer: Tokenizer,
+    benchmark,
+    rows: list[dict],
+    alpha: float,
+) -> list[dict]:
+    router = SemanticRouter(teacher, tokenizer, alpha=alpha)
+    router.fit(benchmark)
+    aligned = []
+
+    for row in rows:
+        if not bool(row.get("must_train", False)):
+            continue
+
+        query = str(row["query"])
+        ranked = router.route(query)
+        if not ranked:
+            continue
+        top = ranked[0]
+
+        extracted = extract_purpose_intent(query)
+        props = extract_propositions(
+            extracted.concept_texts[0]
+            if extracted.concept_texts
+            else query
+        )
+        concepts = proposition_concepts(
+            extracted.concept_texts,
+            props,
+        )
+
+        runtime_prompt = build_semantic_generation_prompt(
+            query,
+            selected_label=top.label,
+            gate="INTERNAL_PROBE",
+            intent=extracted.intent,
+            concepts=concepts,
+            truth_record=None,
+        )
+        row["runtime_prompt"] = runtime_prompt
+        row["runtime_selected_label"] = str(top.label)
+        aligned.append(row)
+
+    return aligned
 
 @torch.no_grad()
 def build_runtime_replay_rows(
@@ -573,6 +626,14 @@ def main() -> None:
         for row in benchmark
     }
 
+    runtime_aligned_new_rows = align_must_train_runtime_prompts(
+        teacher,
+        tokenizer,
+        benchmark,
+        train_rows,
+        args.alpha,
+    )
+
     protected_source_rows = [
         row for row in train_rows if bool(row.get("protected", False))
     ]
@@ -597,7 +658,7 @@ def main() -> None:
     before_test = mean_qa_loss(teacher, tokenizer, test_rows, device)
 
     print("=" * 100)
-    print(" LLM_SEM v0.10.31 Canonical Runtime Replay Fine-Tuning")
+    print(" LLM_SEM v0.10.33 Runtime-Aligned New-Knowledge Fine-Tuning")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
@@ -620,6 +681,7 @@ def main() -> None:
     print("Protected distill wt:", args.protected_distill_weight)
     print("New knowledge weight:", args.new_knowledge_weight)
     print("Runtime replay rows :", len(runtime_replay_rows))
+    print("Runtime-aligned NEW :", len(runtime_aligned_new_rows))
     print("Before train QA NLL :", f"{before_train:.6f}")
     print("Before holdout NLL  :", f"{before_test:.6f}")
     print()
@@ -647,6 +709,14 @@ def main() -> None:
             )
             print("      query :", row["query"])
             print("      answer:", row["answer"])
+            if str(row.get("runtime_prompt", "")).strip():
+                print(
+                    "      runtime label:",
+                    row.get("runtime_selected_label", ""),
+                )
+                print("      runtime prompt:")
+                for line in str(row["runtime_prompt"]).splitlines():
+                    print("        " + line)
     else:
         print("  (none)")
 
