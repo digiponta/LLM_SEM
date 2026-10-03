@@ -501,7 +501,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.20 selective surface repair",
+        "--note", "v0.10.21 runtime-path selective surface repair",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
