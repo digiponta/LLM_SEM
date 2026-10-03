@@ -1,7 +1,7 @@
 # incremental_pareto_sweep_v01026.py
 #
-# LLM_SEM v0.10.26
-# Independent protected-incremental candidates from the same source model.
+# LLM_SEM v0.10.27
+# Independent protected-incremental candidates using actual /internal replay anchors.
 # Select only a candidate that passes the full actual /internal runtime gate.
 
 from __future__ import annotations
@@ -45,16 +45,16 @@ def main():
     # Search around the v0.10.24 near-pass region.
     # (epochs, lr_scale, distillation_weight)
     configs = [
-        (160, 0.50, 6.0),
-        (200, 0.50, 8.0),
-        (240, 0.50, 8.0),
-        (240, 0.50, 10.0),
-        (240, 0.50, 12.0),
-        (240, 0.40, 10.0),
+        (240, 0.50, 2.0),
+        (240, 0.50, 4.0),
+        (320, 0.50, 4.0),
+        (320, 0.50, 6.0),
+        (480, 0.40, 4.0),
+        (480, 0.50, 6.0),
     ]
 
     print("=" * 104)
-    print(" LLM_SEM v0.10.26 Incremental Pareto Sweep")
+    print(" LLM_SEM v0.10.27 Runtime-Replay Pareto Sweep")
     print("=" * 104)
     print("Source             :", source)
     print("Incremental dataset:", args.incremental_dataset)
