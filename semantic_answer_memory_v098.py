@@ -1,6 +1,6 @@
 # semantic_answer_memory_v098.py
 #
-# LLM_SEM v0.9.8
+# LLM_SEM v0.10.0
 # Semantic Answer Memory / Answer Resolver
 #
 # Resolve stable answers from semantic state:
@@ -19,6 +19,8 @@ from typing import Iterable
 
 
 DEFAULT_ANSWER_MEMORY = "data/semantic_guided_qa_v097.json"
+DEFAULT_LEARNED_ANSWER_MEMORY = "data/semantic_answer_memory_learned.jsonl"
+DEFAULT_UNIFIED_ANSWER_MEMORY = "data/unified_semantic_answer_memory_v0100.jsonl"
 
 
 def normalize_text(text: str) -> str:
@@ -49,33 +51,131 @@ class SemanticAnswerMemory:
         self.rows = list(rows)
 
     @classmethod
-    def load(cls, path: str | Path = DEFAULT_ANSWER_MEMORY):
+    def _rows_from_path(cls, path: str | Path) -> list[AnswerCandidate]:
         p = Path(path)
-        obj = json.loads(p.read_text(encoding="utf-8"))
+        if not p.exists():
+            return []
+
+        items: list[dict] = []
+        if p.suffix.lower() == ".jsonl":
+            for raw in p.read_text(encoding="utf-8").splitlines():
+                if not raw.strip():
+                    continue
+                try:
+                    row = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    items.append(row)
+        else:
+            obj = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(obj, dict):
+                items = [x for x in obj.get("samples", []) if isinstance(x, dict)]
+
         rows: list[AnswerCandidate] = []
-        for item in obj.get("samples", []):
-            query = str(item.get("query", "")).strip()
-            label = str(item.get("label", "")).strip()
-            answer = str(item.get("answer", "")).strip()
-            if not query or not label or not answer:
+        for item in items:
+            query = str(item.get("query", item.get("user", ""))).strip()
+            label = str(item.get("label", item.get("semantic_label", ""))).strip()
+            answer = str(item.get("answer", item.get("assistant", ""))).strip()
+            concept = str(item.get("concept", "")).strip()
+            concepts = [
+                str(x).strip()
+                for x in item.get("concepts", [])
+                if str(x).strip()
+            ]
+            if concept and concept not in concepts:
+                concepts.insert(0, concept)
+
+            if not query or not answer:
                 continue
             rows.append(
                 AnswerCandidate(
                     query=query,
-                    label=label,
-                    intent=str(item.get("intent", "")).strip() or "general",
-                    concepts=[
-                        str(x).strip()
-                        for x in item.get("concepts", [])
-                        if str(x).strip()
-                    ],
+                    label=label or "unknown",
+                    intent=str(item.get("intent", "definition")).strip() or "general",
+                    concepts=concepts,
                     truth_status=str(
                         item.get("truth_status", "UNVERIFIED")
                     ).strip().upper(),
                     answer=answer,
                 )
             )
+        return rows
+
+    @classmethod
+    def load(cls, path: str | Path = DEFAULT_ANSWER_MEMORY):
+        return cls(cls._rows_from_path(path))
+
+    @classmethod
+    def load_many(cls, paths: Iterable[str | Path]):
+        rows: list[AnswerCandidate] = []
+        seen: set[tuple[str, str, str]] = set()
+        for path in paths:
+            for row in cls._rows_from_path(path):
+                key = (
+                    normalize_text(row.query),
+                    normalize_text(row.answer),
+                    normalize_text(row.label),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(row)
         return cls(rows)
+
+    def append_persistent(
+        self,
+        path: str | Path,
+        *,
+        query: str,
+        answer: str,
+        label: str,
+        intent: str | None,
+        concepts: list[str] | None,
+        truth_status: str = "UNVERIFIED",
+        source: str = "chat-teach-answer",
+    ) -> bool:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+        candidate = AnswerCandidate(
+            query=query.strip(),
+            label=(label or "unknown").strip(),
+            intent=(intent or "general").strip(),
+            concepts=[str(x).strip() for x in (concepts or []) if str(x).strip()],
+            truth_status=(truth_status or "UNVERIFIED").strip().upper(),
+            answer=answer.strip(),
+        )
+        if not candidate.query or not candidate.answer:
+            return False
+
+        fingerprint = (
+            normalize_text(candidate.query),
+            normalize_text(candidate.answer),
+            normalize_text(candidate.label),
+        )
+        for row in self.rows:
+            old = (
+                normalize_text(row.query),
+                normalize_text(row.answer),
+                normalize_text(row.label),
+            )
+            if old == fingerprint:
+                return False
+
+        payload = {
+            "query": candidate.query,
+            "answer": candidate.answer,
+            "label": candidate.label,
+            "intent": candidate.intent,
+            "concepts": candidate.concepts,
+            "truth_status": candidate.truth_status,
+            "source": source,
+        }
+        with p.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self.rows.append(candidate)
+        return True
 
     def resolve(
         self,
