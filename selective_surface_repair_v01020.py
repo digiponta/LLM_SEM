@@ -14,14 +14,15 @@ import torch.nn.functional as F
 
 from model import LanguageModel
 from semantic_eval import load_benchmark
+from semantic_router import SemanticRouter
 from semantic_guided_answer_finetune_v097 import (
     answer_lm_loss,
-    generation_similarity,
     load_dataset,
     row_concept,
     semantic_vector,
     semantic_vector_grad,
 )
+from runtime_answer_retention_v01015 import ratio, runtime_generate
 from tokenizer import Tokenizer
 
 
@@ -47,19 +48,38 @@ def parse_args():
 
 
 @torch.no_grad()
-def concept_scores(model, tokenizer, rows, device):
+def concept_scores(model, tokenizer, rows, benchmark, device, alpha):
+    router = SemanticRouter(model, tokenizer, alpha=alpha)
+    router.fit(benchmark)
+
     grouped = {}
     for row in rows:
         grouped.setdefault(row_concept(row), []).append(row)
 
     out = {}
+    details = {}
     for concept, concept_rows in grouped.items():
         vals = []
+        concept_details = []
         for row in concept_rows:
-            sim, _ = generation_similarity(model, tokenizer, row, device)
+            generated, label, margin = runtime_generate(
+                model,
+                tokenizer,
+                router,
+                str(row["query"]),
+            )
+            sim = ratio(generated, str(row["answer"]))
             vals.append(sim)
+            concept_details.append({
+                "query": str(row["query"]),
+                "similarity": sim,
+                "label": label,
+                "margin": margin,
+                "generated": generated,
+            })
         out[concept] = sum(vals) / len(vals) if vals else 0.0
-    return out
+        details[concept] = concept_details
+    return out, details
 
 
 def train_one_concept(
@@ -169,7 +189,7 @@ def main():
     output.parent.mkdir(parents=True, exist_ok=True)
 
     print("=" * 104)
-    print(" LLM_SEM v0.10.20 Selective Surface Repair")
+    print(" LLM_SEM v0.10.21 Runtime-Path Selective Surface Repair")
     print("=" * 104)
     print("Source model       :", current)
     print("Concepts           :", len(grouped))
@@ -183,11 +203,13 @@ def main():
 
     for concept, concept_rows in grouped.items():
         base_model, _ = LanguageModel.load_checkpoint(current, device=device)
-        before = concept_scores(
+        before, before_details = concept_scores(
             base_model,
             tokenizer,
             rows,
+            benchmark,
             device,
+            args.alpha,
         )
         target_before = before.get(concept, 0.0)
 
@@ -206,7 +228,7 @@ def main():
         print()
         print(
             f"REPAIR concept={concept!r} "
-            f"before={target_before:.6f}"
+            f"runtime_before={target_before:.6f}"
         )
         train_one_concept(
             str(current),
@@ -223,11 +245,13 @@ def main():
             str(trial),
             device=device,
         )
-        after = concept_scores(
+        after, after_details = concept_scores(
             trial_model,
             tokenizer,
             rows,
+            benchmark,
             device,
+            args.alpha,
         )
 
         target_after = after.get(concept, 0.0)
@@ -249,11 +273,18 @@ def main():
 
         print(
             f"SELECT concept={concept!r} "
-            f"target={target_before:.6f}->{target_after:.6f} "
+            f"runtime_target={target_before:.6f}->{target_after:.6f} "
             f"gain={target_gain:+.6f} "
-            f"max_other_drop={max_other_drop:+.6f} "
+            f"max_other_runtime_drop={max_other_drop:+.6f} "
             f"decision={'ACCEPT' if accept else 'REJECT'}"
         )
+        for detail in after_details.get(concept, []):
+            print(
+                f"  runtime query={detail['query']!r} "
+                f"label={detail['label']} margin={detail['margin']:+.6f} "
+                f"sim={detail['similarity']:.6f}"
+            )
+            print("    generated:", detail["generated"])
 
         if accept:
             shutil.copy2(trial, output)
