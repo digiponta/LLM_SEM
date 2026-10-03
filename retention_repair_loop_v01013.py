@@ -66,6 +66,21 @@ def main():
                 )
                 raise SystemExit(1)
 
+            multi_check = subprocess.run([
+                sys.executable, "multi_knowledge_internalization_v01016.py",
+                "--model", str(current),
+                "--dataset", args.sleep_dataset,
+                "--benchmark", args.benchmark,
+                "--tokenizer", args.tokenizer,
+            ], check=False)
+
+            if multi_check.returncode != 0:
+                print(
+                    "REPAIR> retention gates passed, but multi-knowledge "
+                    "internalization failed; candidate will not be promoted."
+                )
+                raise SystemExit(1)
+
             if current != candidate:
                 candidate.write_bytes(current.read_bytes())
             promote = subprocess.run([
@@ -73,7 +88,7 @@ def main():
                 "--candidate", str(candidate),
                 "--manifest", args.manifest,
                 "--retention-pass",
-                "--note", "v0.10.15 runtime-answer retention repair",
+                "--note", "v0.10.16 multi-knowledge internalization",
             ], check=False)
             raise SystemExit(promote.returncode)
 
