@@ -1,6 +1,6 @@
 # one_by_one_sleep_v01030.py
 #
-# LLM_SEM v0.10.33
+# LLM_SEM v0.10.34
 # Learn exactly one new QA row at a time.
 # After each row:
 #   - protect previously known/accepted rows with runtime replay,
@@ -21,7 +21,7 @@ from pathlib import Path
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.33 Runtime-Aligned One-by-One Safe Retry Sleep"
+        description="LLM_SEM v0.10.34 Partial Commit One-by-One Sleep"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -82,8 +82,8 @@ def save_step_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.33",
-                "mode": "one-by-one-safe-retry",
+                "version": "v0.10.34",
+                "mode": "one-by-one-partial-commit",
                 "samples": rows,
             },
             ensure_ascii=False,
@@ -159,7 +159,7 @@ def main():
     ]
 
     print("=" * 108)
-    print(" LLM_SEM v0.10.33 Runtime-Aligned One-by-One Safe Retry Sleep")
+    print(" LLM_SEM v0.10.34 Partial Commit One-by-One Sleep")
     print("=" * 108)
     print("Source model       :", source)
     print("New training rows  :", len(new_rows))
@@ -178,6 +178,8 @@ def main():
     accepted_rows: list[dict] = []
     accepted = 0
     rejected = 0
+    accepted_details = []
+    rejected_details = []
 
     for index, target in enumerate(new_rows, 1):
         query = str(target.get("query", ""))
@@ -398,11 +400,25 @@ def main():
             accepted_row["protected"] = True
             accepted_rows.append(accepted_row)
             accepted += 1
+            accepted_details.append({
+                "query": query,
+                "concept": concept,
+                "attempt": int(best["attempt"]),
+                "target_before": float(best["target_before"]),
+                "target_after": float(best["target_after"]),
+                "target_gain": float(best["target_gain"]),
+                "candidate": str(best["candidate"]),
+            })
         else:
             print()
             print("DECISION: REJECT / ROLLBACK (all retries unsafe or insufficient)")
             print("ROLLBACK SOURCE:", current_source)
             rejected += 1
+            rejected_details.append({
+                "query": query,
+                "concept": concept,
+                "reason": "all retries unsafe or insufficient",
+            })
 
     print()
     print("=" * 108)
@@ -426,15 +442,69 @@ def main():
         result_json=final_json,
         allow_cpu=args.allow_cpu,
     )
+    final_failures = int(final_metrics.get("failures", 10**9))
+    final_known = int(final_metrics.get("known_failures", 10**9))
+    final_new = int(final_metrics.get("new_failures", 10**9))
+    final_mean = float(final_metrics.get("candidate_canonical_mean", 0.0))
+
+    if final_code == 0:
+        state = "COMPLETE"
+        exit_code = 0
+    elif accepted > 0 and final_known == 0:
+        state = "PARTIAL"
+        exit_code = 3
+    else:
+        state = "UNLEARNED"
+        exit_code = 1
+
+    state_json = output.with_name(f"{output.stem}.partial-state.json")
+    state_json.write_text(
+        json.dumps(
+            {
+                "version": "v0.10.34",
+                "state": state,
+                "source": str(source),
+                "output": str(output),
+                "accepted_rows": accepted,
+                "rejected_rows": rejected,
+                "accepted_details": accepted_details,
+                "rejected_details": rejected_details,
+                "runtime": {
+                    "failures": final_failures,
+                    "known_failures": final_known,
+                    "new_failures": final_new,
+                    "canonical_mean": final_mean,
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ) + "\n",
+        encoding="utf-8",
+    )
+
     print(
         "FINAL RUNTIME: "
-        f"failures={final_metrics.get('failures')} "
-        f"known={final_metrics.get('known_failures')} "
-        f"new={final_metrics.get('new_failures')} "
-        f"canonical_mean={float(final_metrics.get('candidate_canonical_mean', 0.0)):.6f}"
+        f"failures={final_failures} "
+        f"known={final_known} "
+        f"new={final_new} "
+        f"canonical_mean={final_mean:.6f}"
     )
-    print("RESULT:", "PASS" if final_code == 0 else "FAIL")
-    raise SystemExit(final_code)
+    print("INTERNALIZATION STATE:", state)
+    print("Accepted rows:", accepted)
+    print("Rejected rows:", rejected)
+    print("State file   :", state_json)
+
+    if state == "COMPLETE":
+        print("RESULT: COMPLETE - all runtime probes passed.")
+    elif state == "PARTIAL":
+        print(
+            "RESULT: PARTIAL - accepted rows are retained; "
+            "remaining rows will be retried by a later /sleep."
+        )
+    else:
+        print("RESULT: UNLEARNED - no safe partial progress to commit.")
+
+    raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":
