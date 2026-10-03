@@ -498,7 +498,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.7.2 Unified Semantic Runtime")
+    print(" LLM_SEM v0.9.0 Truth-Aware Unified Semantic Runtime")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -606,7 +606,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.7.2 Unified Semantic Runtime")
+            print("Runtime        : LLM_SEM v0.9.0 Truth-Aware Unified Semantic Runtime")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
@@ -624,6 +624,30 @@ def main() -> None:
                 f"mem>={args.memory_sim:.2f}, override>={args.override_sim:.2f}, "
                 f"k={args.local_k}, purity>={args.local_purity:.2f}"
             )
+            continue
+
+        if text.startswith("/truth"):
+            parts = text.split(maxsplit=1)
+            if len(parts) != 2:
+                print("Usage: /truth TRUE|FALSE|UNVERIFIED|CONTESTED|OUTDATED")
+                continue
+            if last_text is None:
+                print("No previous utterance is available.")
+                continue
+            state = parts[1].strip().upper()
+            try:
+                changed = update_memory_truth(
+                    memory_path,
+                    last_text,
+                    state,
+                )
+            except ValueError as exc:
+                print(exc)
+                continue
+            if changed:
+                print(f"Truth state updated: {state} for {last_text!r}")
+            else:
+                print("No matching Semantic Memory record. Teach it first.")
             continue
 
         if text.startswith("/teach"):
