@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.9.0 Truth-Aware Unified Semantic Runtime
+# LLM_SEM v0.9.5 Truth-Aware Answering Runtime
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -97,6 +97,15 @@ def parse_args() -> argparse.Namespace:
         choices=["known-first", "balanced", "discovery-first"],
     )
     p.add_argument("--alpha", type=float, default=0.35)
+    p.add_argument("--max-new-tokens", type=int, default=80)
+    p.add_argument("--temperature", type=float, default=0.8)
+    p.add_argument("--top-k", type=int, default=40)
+    p.add_argument(
+        "--answer",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Generate a natural-language continuation after semantic/truth analysis.",
+    )
     p.add_argument("--prototypes-per-label", type=int, default=2)
     p.add_argument("--local-k", type=int, default=3)
     p.add_argument("--local-purity", type=float, default=0.60)
@@ -447,6 +456,34 @@ def print_teaching_effect(
     print("TCH> --------------------------------------------------------")
 
 
+def generate_answer(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    text: str,
+    args: argparse.Namespace,
+) -> str:
+    """Generate a user-visible answer independently from semantic gate state."""
+    prompt_ids = tokenizer.encode(text, add_bos=True, add_eos=False)
+    generated = model.generate(
+        prompt_ids,
+        max_new_tokens=max(1, int(args.max_new_tokens)),
+        eos_id=None,
+        temperature=float(args.temperature),
+        top_k=max(1, int(args.top_k)),
+        repetition_penalty=1.15,
+    )
+    continuation = generated[len(prompt_ids):]
+    answer = tokenizer.decode(continuation, skip_special_tokens=True).strip()
+    if answer:
+        return answer
+
+    # Defensive fallback: decode the full sequence and remove the original text.
+    full = tokenizer.decode(generated, skip_special_tokens=True)
+    if full.startswith(text):
+        full = full[len(text):]
+    return full.strip() or "(generation produced no visible tokens)"
+
+
 def resolve_runtime_model(args: argparse.Namespace) -> str:
     if args.model:
         return args.model
@@ -526,7 +563,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.9.4 Truth-Aware Consolidated Runtime")
+    print(" LLM_SEM v0.9.5 Truth-Aware Answering Runtime")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -548,6 +585,8 @@ def main() -> None:
     print("Local purity     :", args.local_purity)
     print("Memory sim       :", args.memory_sim)
     print("Override sim     :", args.override_sim)
+    print("Answer generation:", "ON" if args.answer else "OFF")
+    print("Max new tokens   :", args.max_new_tokens)
     print()
     print("Commands:")
     print("  /learn on|off|status")
@@ -555,7 +594,7 @@ def main() -> None:
     print("  /teach <label>       teach the previous user utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.9.0 runtime policy")
+    print("  /runtime              show v0.9.5 runtime policy")
     print("  /quit")
     print()
 
@@ -635,7 +674,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.9.4 Truth-Aware Consolidated Runtime")
+            print("Runtime        : LLM_SEM v0.9.5 Truth-Aware Answering Runtime")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
@@ -999,6 +1038,10 @@ def main() -> None:
                 "SEM> Routed to semantic class: "
                 f"{last_snapshot.selected_label}"
             )
+
+        if args.answer:
+            answer = generate_answer(model, tokenizer, text, args)
+            print("AI>", answer)
 
 
 if __name__ == "__main__":
