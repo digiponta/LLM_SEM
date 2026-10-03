@@ -224,54 +224,109 @@ def compose_fact_answer(subject: str, values: list[str]) -> str:
     return f"{subject}は、{head}、{clean[-1]}である。"
 
 
+def _continuation_clause(subject: str, fact: dict) -> str:
+    """Render one unconditional fact as a continuation after 'Xは、...'."""
+    relation = str(fact.get("relation", "")).strip()
+    value = str(fact.get("value", "")).strip()
+    context = str(fact.get("relation_context", "")).strip()
+
+    if relation == "definition":
+        return f"{value}であり"
+    if relation == "includes":
+        prefix = f"{context}、" if context else ""
+        return f"{prefix}{value}を含み"
+    if relation == "belongs_to":
+        prefix = f"{context}、" if context else ""
+        return f"{prefix}{value}に属し"
+    if relation == "has":
+        prefix = f"{context}、" if context else ""
+        return f"{prefix}{value}を持ち"
+    if relation == "used_for":
+        prefix = f"{context}、" if context else ""
+        return f"{prefix}{value}に利用され"
+    if relation == "is":
+        return f"{value}であり"
+    return f"{relation}が{value}であり"
+
+
+def _final_clause(subject: str, fact: dict) -> str:
+    """Render one unconditional fact as the sentence-final predicate."""
+    relation = str(fact.get("relation", "")).strip()
+    value = str(fact.get("value", "")).strip()
+    context = str(fact.get("relation_context", "")).strip()
+
+    if relation == "definition":
+        return f"{value}である"
+    if relation == "includes":
+        prefix = f"{context}、" if context else ""
+        return f"{prefix}{value}を含む"
+    if relation == "belongs_to":
+        prefix = f"{context}、" if context else ""
+        return f"{prefix}{value}に属する"
+    if relation == "has":
+        prefix = f"{context}、" if context else ""
+        return f"{prefix}{value}を持つ"
+    if relation == "used_for":
+        prefix = f"{context}、" if context else ""
+        return f"{prefix}{value}に利用される"
+    if relation == "is":
+        return f"{value}である"
+    return f"{relation}が{value}である"
+
+
 def compose_subject_facts(path: str | Path, subject: str) -> str:
-    """Render all learned facts for a subject, merging compatible 'is' facts."""
+    """Naturally compose compatible facts for one subject.
+
+    Unconditional facts are compressed into one Japanese sentence when
+    possible. Conditional facts remain separate so their scope is preserved.
+    """
     facts = facts_for_subject(path, subject)
     if not facts:
         return ""
 
-    unconditional_is = [
+    unconditional = [
         f for f in facts
-        if str(f.get("relation", "")) == "is"
-        and not str(f.get("condition", "")).strip()
-        and not str(f.get("relation_context", "")).strip()
+        if not str(f.get("condition", "")).strip()
     ]
-    parts = []
-    if unconditional_is:
-        merged = compose_fact_answer(
-            subject,
-            [str(f.get("value", "")) for f in unconditional_is],
+    conditional = [
+        f for f in facts
+        if str(f.get("condition", "")).strip()
+    ]
+
+    sentences: list[str] = []
+
+    if unconditional:
+        # Prefer generic identity/definition information first, then relations.
+        priority = {
+            "definition": 0,
+            "is": 1,
+            "belongs_to": 2,
+            "has": 3,
+            "includes": 4,
+            "used_for": 5,
+        }
+        ordered = sorted(
+            unconditional,
+            key=lambda f: priority.get(str(f.get("relation", "")).strip(), 9),
         )
-        if merged:
-            parts.append(merged.rstrip("。"))
 
-    for fact in facts:
-        if fact in unconditional_is:
-            continue
-        relation = str(fact.get("relation", "")).strip()
-        value = str(fact.get("value", "")).strip()
-        condition = str(fact.get("condition", "")).strip()
-        context = str(fact.get("relation_context", "")).strip()
-
-        if relation == "definition":
-            body = f"{subject}とは、{value}"
-        elif relation == "includes":
-            prefix = f"{context}、" if context else ""
-            body = f"{subject}は、{prefix}{value}を含む"
-        elif relation == "belongs_to":
-            prefix = f"{context}、" if context else ""
-            body = f"{subject}は、{prefix}{value}に属する"
-        elif relation == "has":
-            prefix = f"{context}、" if context else ""
-            body = f"{subject}は、{prefix}{value}を持つ"
-        elif relation == "used_for":
-            prefix = f"{context}、" if context else ""
-            body = f"{subject}は、{prefix}{value}に利用される"
+        if len(ordered) == 1:
+            sentences.append(
+                f"{subject}は、{_final_clause(subject, ordered[0])}。"
+            )
         else:
-            body = f"{subject}の{relation}は、{value}である"
+            heads = [
+                _continuation_clause(subject, fact)
+                for fact in ordered[:-1]
+            ]
+            tail = _final_clause(subject, ordered[-1])
+            sentences.append(
+                f"{subject}は、" + "、".join(heads + [tail]) + "。"
+            )
 
-        if condition:
-            body = f"{condition}のとき、{body}"
-        parts.append(body.rstrip("。"))
+    for fact in conditional:
+        condition = str(fact.get("condition", "")).strip()
+        body = _final_clause(subject, fact)
+        sentences.append(f"{condition}のとき、{subject}は、{body}。")
 
-    return "。".join(parts) + ("。" if parts else "")
+    return "".join(sentences)
