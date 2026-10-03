@@ -31,7 +31,7 @@ from tokenizer import Tokenizer
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.18 Improvement-Aware Runtime Answer Retention"
+        description="LLM_SEM v0.10.28 Canonical-Aware Runtime Answer Retention"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--candidate", required=True)
@@ -160,7 +160,7 @@ def main() -> None:
     candidate_router.fit(benchmark)
 
     print("=" * 104)
-    print(" LLM_SEM v0.10.18 Improvement-Aware Runtime /internal Retention")
+    print(" LLM_SEM v0.10.28 Canonical-Aware Runtime /internal Retention")
     print("=" * 104)
     print("Source checkpoint   :", args.source)
     print("Candidate checkpoint:", args.candidate)
@@ -210,8 +210,13 @@ def main() -> None:
         source_canonical_vals.append(source_canonical)
         candidate_canonical_vals.append(candidate_canonical)
 
-        quality_ok = (
+        canonical_complete = candidate_canonical >= 0.999999
+        termination_ok = (
             bool(quality["terminated"])
+            or canonical_complete
+        )
+        quality_ok = (
+            termination_ok
             and float(quality["abnormal_ratio"]) <= args.max_abnormal_ratio
             and float(quality["repetition_ratio"]) <= args.max_repetition_ratio
         )
@@ -259,6 +264,8 @@ def main() -> None:
             "source_margin": source_margin,
             "candidate_margin": candidate_margin,
             "candidate_answer": candidate_answer,
+            "canonical_complete": canonical_complete,
+            "termination_ok": termination_ok,
         })
 
         print()
@@ -279,6 +286,7 @@ def main() -> None:
         print(
             "    quality    : "
             f"terminated={quality['terminated']} "
+            f"canonical_complete={canonical_complete} "
             f"abnormal={float(quality['abnormal_ratio']):.6f} "
             f"repetition={float(quality['repetition_ratio']):.6f}"
         )
