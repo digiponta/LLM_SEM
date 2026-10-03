@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.0 LLM_TRY Feature Integration
+# LLM_SEM v0.10.1 Relation Teaching Integration
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -53,6 +53,7 @@ from semantic_proposition_v036 import (
 )
 from tokenizer import Tokenizer
 from answer_aware_gate_v099 import apply_answer_aware_gate
+from relation_memory_v0101 import DEFAULT_RELATION_MEMORY, append_relation_fact
 from semantic_answer_memory_v098 import (
     DEFAULT_ANSWER_MEMORY,
     DEFAULT_LEARNED_ANSWER_MEMORY,
@@ -102,6 +103,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--answer-memory", default=DEFAULT_ANSWER_MEMORY)
     p.add_argument("--unified-answer-memory", default=DEFAULT_UNIFIED_ANSWER_MEMORY)
     p.add_argument("--learned-answer-memory", default=DEFAULT_LEARNED_ANSWER_MEMORY)
+    p.add_argument("--relation-memory", default=DEFAULT_RELATION_MEMORY)
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument("--answer-gate-min-score", type=float, default=12.0)
     p.add_argument(
@@ -632,7 +634,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.0 LLM_TRY Feature Integration")
+    print(" LLM_SEM v0.10.1 Relation Teaching Integration")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -659,6 +661,7 @@ def main() -> None:
     print("Answer memory    :", args.answer_memory)
     print("Unified memory   :", args.unified_answer_memory if Path(args.unified_answer_memory).exists() else "(not built)")
     print("Learned memory   :", args.learned_answer_memory)
+    print("Relation memory  :", args.relation_memory)
     print("Answer entries   :", len(answer_memory.rows))
     print("Answer gate min  :", args.answer_gate_min_score)
     print()
@@ -669,7 +672,7 @@ def main() -> None:
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.0 runtime policy")
+    print("  /runtime              show v0.10.1 runtime policy")
     print("  /quit")
     print()
 
@@ -749,7 +752,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.10.0 LLM_TRY Feature Integration")
+            print("Runtime        : LLM_SEM v0.10.1 Relation Teaching Integration")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
@@ -807,6 +810,10 @@ def main() -> None:
                 concepts=answer_concepts,
                 truth_status=truth_state,
             )
+            relation_added = append_relation_fact(
+                args.relation_memory,
+                trusted_answer,
+            )
             if added:
                 print(
                     "Learned answer: "
@@ -815,6 +822,16 @@ def main() -> None:
                 )
             else:
                 print("Answer already learned or invalid.")
+            if relation_added:
+                print(
+                    "Learned relation fact -> "
+                    f"{args.relation_memory}"
+                )
+                print(
+                    "INFO> rebuild unified memory to enable reverse/contextual "
+                    "relation lookup: "
+                    "python build_unified_semantic_answer_memory_v0100.py"
+                )
             continue
 
         if text.startswith("/truth"):
