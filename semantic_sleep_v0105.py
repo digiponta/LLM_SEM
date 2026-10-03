@@ -482,7 +482,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.17 multi-knowledge balanced sleep",
+        "--note", "v0.10.18 improvement-aware runtime retention",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
