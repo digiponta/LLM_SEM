@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.7.2 Unified Semantic Runtime
+# LLM_SEM v0.9.0 Truth-Aware Unified Semantic Runtime
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -17,9 +17,13 @@ import torch
 from adaptive_semantic_learning import (
     append_semantic_memory,
     exact_memory_label,
+    exact_truth_record,
     load_semantic_memory,
     memory_status_counts,
     merge_samples,
+    truth_notice,
+    truth_status_counts,
+    update_memory_truth,
 )
 from adaptive_semantic_runtime import (
     build_multi_prototypes,
@@ -520,8 +524,9 @@ def main() -> None:
     print("  /learn on|off|status")
     print("  /semantic on|off|status")
     print("  /teach <label>       teach the previous user utterance")
+    print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.7.2 runtime policy")
+    print("  /runtime              show v0.9.0 runtime policy")
     print("  /quit")
     print()
 
@@ -589,6 +594,14 @@ def main() -> None:
             print(
                 "Memory priority : ACTIVE/TRAINING/VALIDATING/FAILED "
                 "remain authoritative until validation PASS"
+            )
+            truth_counts = truth_status_counts(memory_path)
+            print(
+                "Truth states    : "
+                + ", ".join(
+                    f"{state}={truth_counts.get(state, 0)}"
+                    for state in ("TRUE", "FALSE", "UNVERIFIED", "CONTESTED", "OUTDATED")
+                )
             )
             continue
 
@@ -926,3 +939,15 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+        truth_record = exact_truth_record(memory_path, text)
+        notice = truth_notice(truth_record)
+        if truth_record is not None:
+            print(
+                "TRUTH> "
+                f"state={truth_record.get('truth_status', 'UNVERIFIED')} "
+                f"confidence={float(truth_record.get('truth_confidence', 0.0)):.3f}"
+            )
+            if notice:
+                print("TRUTH> WARNING:", notice)
+
+
