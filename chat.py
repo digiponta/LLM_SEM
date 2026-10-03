@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.9.9.1 Gate Reason Consistency Fix
+# LLM_SEM v0.10.0 LLM_TRY Feature Integration
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -55,6 +55,8 @@ from tokenizer import Tokenizer
 from answer_aware_gate_v099 import apply_answer_aware_gate
 from semantic_answer_memory_v098 import (
     DEFAULT_ANSWER_MEMORY,
+    DEFAULT_LEARNED_ANSWER_MEMORY,
+    DEFAULT_UNIFIED_ANSWER_MEMORY,
     SemanticAnswerMemory,
     truth_allows_answer_memory,
 )
@@ -98,6 +100,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--unknown-benchmark", default=DEFAULT_UNKNOWN_BENCHMARK)
     p.add_argument("--memory", default=DEFAULT_MEMORY)
     p.add_argument("--answer-memory", default=DEFAULT_ANSWER_MEMORY)
+    p.add_argument("--unified-answer-memory", default=DEFAULT_UNIFIED_ANSWER_MEMORY)
+    p.add_argument("--learned-answer-memory", default=DEFAULT_LEARNED_ANSWER_MEMORY)
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument("--answer-gate-min-score", type=float, default=12.0)
     p.add_argument(
@@ -587,7 +591,12 @@ def main() -> None:
     base_samples = load_benchmark(args.benchmark)
     unknown_samples = load_benchmark(args.unknown_benchmark)
     memory_path = Path(args.memory)
-    answer_memory = SemanticAnswerMemory.load(args.answer_memory)
+    answer_memory_paths = [args.answer_memory]
+    if Path(args.unified_answer_memory).exists():
+        answer_memory_paths.append(args.unified_answer_memory)
+    if Path(args.learned_answer_memory).exists():
+        answer_memory_paths.append(args.learned_answer_memory)
+    answer_memory = SemanticAnswerMemory.load_many(answer_memory_paths)
     learning_enabled = bool(args.learn)
     semantic_v2_enabled = bool(args.semantic_v2)
     composition_enabled = bool(args.composition)
@@ -623,7 +632,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.9.9.1 Gate Reason Consistency Fix")
+    print(" LLM_SEM v0.10.0 LLM_TRY Feature Integration")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -648,6 +657,8 @@ def main() -> None:
     print("Answer generation:", "ON" if args.answer else "OFF")
     print("Max new tokens   :", args.max_new_tokens)
     print("Answer memory    :", args.answer_memory)
+    print("Unified memory   :", args.unified_answer_memory if Path(args.unified_answer_memory).exists() else "(not built)")
+    print("Learned memory   :", args.learned_answer_memory)
     print("Answer entries   :", len(answer_memory.rows))
     print("Answer gate min  :", args.answer_gate_min_score)
     print()
@@ -655,9 +666,10 @@ def main() -> None:
     print("  /learn on|off|status")
     print("  /semantic on|off|status")
     print("  /teach <label>       teach the previous user utterance")
+    print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.9.9.1 runtime policy")
+    print("  /runtime              show v0.10.0 runtime policy")
     print("  /quit")
     print()
 
@@ -737,7 +749,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.9.9.1 Gate Reason Consistency Fix")
+            print("Runtime        : LLM_SEM v0.10.0 LLM_TRY Feature Integration")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
@@ -755,6 +767,54 @@ def main() -> None:
                 f"mem>={args.memory_sim:.2f}, override>={args.override_sim:.2f}, "
                 f"k={args.local_k}, purity>={args.local_purity:.2f}"
             )
+            continue
+
+        if text.startswith("/teach-answer"):
+            parts = text.split(maxsplit=1)
+            if len(parts) != 2 or not parts[1].strip():
+                print("Usage: /teach-answer <trusted answer>")
+                continue
+            if last_text is None or last_snapshot is None:
+                print("No previous utterance is available to teach.")
+                continue
+            if not learning_enabled:
+                print("Learning is OFF. Use /learn on first.")
+                continue
+
+            trusted_answer = parts[1].strip()
+            extracted_answer = extract_purpose_intent(last_text)
+            answer_props = extract_propositions(
+                extracted_answer.concept_texts[0]
+                if extracted_answer.concept_texts
+                else last_text
+            )
+            answer_concepts = proposition_concepts(
+                extracted_answer.concept_texts,
+                answer_props,
+            )
+            truth_row = exact_truth_record(memory_path, last_text)
+            truth_state = (
+                str(truth_row.get("truth_status", "UNVERIFIED"))
+                if truth_row is not None
+                else "UNVERIFIED"
+            )
+            added = answer_memory.append_persistent(
+                args.learned_answer_memory,
+                query=last_text,
+                answer=trusted_answer,
+                label=last_snapshot.selected_label,
+                intent=extracted_answer.intent,
+                concepts=answer_concepts,
+                truth_status=truth_state,
+            )
+            if added:
+                print(
+                    "Learned answer: "
+                    f"query={last_text!r} label={last_snapshot.selected_label!r} "
+                    f"-> {args.learned_answer_memory}"
+                )
+            else:
+                print("Answer already learned or invalid.")
             continue
 
         if text.startswith("/truth"):
