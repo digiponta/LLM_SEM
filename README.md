@@ -3738,3 +3738,110 @@ come from explicit supervision. Later experiments should add:
 
 Explicit Truth-Aware metadata should remain available even after projection
 training so that learned predictions never replace auditable provenance.
+
+
+## v0.9.2 Contrastive Truth-State Representation
+
+v0.9.1 reached 90% training accuracy but only 60% holdout accuracy on the
+25-sample controlled truth-state dataset. In particular, FALSE and CONTESTED
+were not reliably separated.
+
+v0.9.2 introduces a dedicated truth-state geometry instead of attaching a
+plain classifier directly to the frozen 64-dimensional semantic vector.
+
+Architecture:
+
+```text
+Frozen Semantic Vector (64)
+          |
+          v
+Truth Projector
+64 -> 32 -> 16
+          |
+          +-- normalized Truth Vector (16)
+          |
+          v
+5-way Truth Classifier
+TRUE / FALSE / UNVERIFIED / CONTESTED / OUTDATED
+```
+
+Training objective:
+
+```text
+Cross Entropy
++ Center Loss
++ Inter-Class Separation Loss
+```
+
+The center term pulls examples with the same truth state together in the
+16-dimensional Truth Space. The separation term pushes truth-state class
+centers apart.
+
+The base LLM_SEM encoder remains completely frozen.
+
+### Train and multi-seed evaluate
+
+```powershell
+python truth_state_contrastive_v092.py
+```
+
+Defaults:
+
+```text
+epochs              : 400
+learning rate       : 7e-4
+projection          : 64 -> 32 -> 16
+center weight       : 1.0
+separation weight   : 0.5
+separation margin   : 0.20
+holdout per class   : 1
+multi-seed          : 10
+```
+
+The script reports:
+
+```text
+holdout accuracy per seed
+mean / standard deviation
+minimum / maximum
+within-class similarity
+between-class center similarity
+best-seed per-class holdout results
+```
+
+Output:
+
+```text
+model/truth-state-contrastive-v092.pt
+```
+
+### Runtime
+
+```powershell
+python truth_state_runtime_v092.py "太陽は地球の周りを公転する"
+```
+
+The runtime returns the five-state ranking and the dimension of the learned
+Truth Vector.
+
+### Interpretation
+
+The key comparison is against v0.9.1:
+
+```text
+v0.9.1
+  plain classification from Semantic Vector
+  holdout = 60% on seed 7
+
+v0.9.2
+  explicit Truth Space + contrastive geometry
+  evaluate across multiple seeds
+```
+
+Improvement would indicate that truth-state labels benefit from a separate
+representation space rather than being linearly/readily available in the
+ordinary semantic-topic space.
+
+As with v0.9.1, this is supervised truth-state learning, not autonomous factual
+verification. Explicit provenance and Truth-Aware Semantic Memory remain the
+auditable source of supervision.
