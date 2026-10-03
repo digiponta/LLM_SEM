@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 import json
 import shutil
 import subprocess
@@ -185,7 +186,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.12 Sleep Output Stabilization")
+    print(" LLM_SEM v0.10.22 Retention-First / No-Op Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -470,6 +471,22 @@ def main() -> None:
     run_step(surface_cmd, "selective surface repair")
     shutil.copy2(surface_candidate, final_candidate)
     print("SLEEP> selected surface candidate:", final_candidate)
+
+    if (
+        not pending
+        and source.exists()
+        and final_candidate.exists()
+        and filecmp.cmp(source, final_candidate, shallow=False)
+    ):
+        print()
+        print("=" * 96)
+        print(" RETENTION-FIRST NO-OP SLEEP")
+        print("=" * 96)
+        print("SLEEP> active model already satisfies mandatory internal knowledge.")
+        print("SLEEP> selective surface repair produced no safe improvement.")
+        print("SLEEP> KEEP_SOURCE:", source)
+        print("SLEEP> promotion skipped; active-model manifest unchanged.")
+        return
 
     # Stage D: Validate newly consolidated Semantic Memory against final model.
     if pending:
