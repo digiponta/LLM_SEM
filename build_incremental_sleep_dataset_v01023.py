@@ -93,7 +93,7 @@ def main():
     )
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.24 Protected Incremental Sleep Dataset Builder")
+    print(" LLM_SEM v0.10.29 Incremental Sleep Dataset + Text Trace")
     print("=" * 96)
     print("Failed/new concepts       :", ", ".join(sorted(failed_concepts)) or "(none)")
     print("Protected mandatory rows  :", protected)
@@ -101,6 +101,24 @@ def main():
     print("Protected anchor rows      :", protected)
     print("Optional/base rows retained:", len(selected) - mandatory_selected - protected)
     print("Output                    :", output_path)
+    print()
+    print("Incremental dataset text trace")
+    print("------------------------------")
+    for index, row in enumerate(selected, 1):
+        kind = (
+            "NEW"
+            if bool(row.get("must_train", False))
+            else "PROTECTED"
+            if bool(row.get("protected", False))
+            else "OPTIONAL"
+        )
+        print(
+            f"{index:02d}. [{kind}] "
+            f"concept={concept_of(row)!r} "
+            f"label={row.get('label')!r}"
+        )
+        print("    query :", row.get("query", ""))
+        print("    answer:", row.get("answer", ""))
 
     if not failed_concepts or mandatory_selected == 0:
         raise SystemExit(2)
