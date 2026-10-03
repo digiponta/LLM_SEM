@@ -4408,3 +4408,125 @@ automatically loads the fine-tuned checkpoint through
 
 This stage aims to improve answer generation without discarding the semantic
 knowledge already consolidated into the model.
+
+
+## v0.9.8 Semantic Answer Memory
+
+v0.9.7 showed that the small language model can keep semantic routing stable,
+but supervised prompt fine-tuning still does not produce reliable Japanese QA
+answers.
+
+v0.9.8 therefore separates answer selection from free generation.
+
+Runtime flow:
+
+```text
+User Query
+   |
+   v
+Semantic Router
+   |
+   +-- selected label
+   +-- intent
+   +-- concepts
+   +-- truth metadata
+   |
+   v
+Semantic Answer Memory
+   |
+   +-- strong semantic match -> stable answer
+   |
+   +-- weak/no match -> semantic-guided generator fallback
+   |
+   v
+AI> answer
+```
+
+The answer resolver scores candidates using:
+
+```text
+exact query match
+semantic label match
+intent match
+concept overlap
+concept occurrence in paraphrased query
+```
+
+The default Answer Memory source is:
+
+```text
+data/semantic_guided_qa_v097.json
+```
+
+so the same supervised QA knowledge from v0.9.7 can now be used directly as
+stable response memory rather than relying on the tiny LM to reproduce it.
+
+Example:
+
+```text
+You> CPUとは
+SEM> ... label=computer
+ANS> mode=semantic-answer-memory score=...
+AI> CPUは命令を処理する中央処理装置です。
+```
+
+A paraphrase such as:
+
+```text
+GPUって何
+```
+
+can resolve the canonical GPU answer when the semantic runtime supplies:
+
+```text
+label=computer
+intent=definition
+concept=GPU
+```
+
+### Truth-aware safety
+
+Explicit FALSE, CONTESTED, or OUTDATED truth metadata blocks a stable Answer
+Memory response so the runtime does not silently present a known problematic
+record as authoritative. In that case the existing Truth warning remains
+visible and generation falls back to the normal guided path.
+
+UNVERIFIED may still resolve an Answer Memory entry, but the runtime keeps its
+explicit UNVERIFIED warning.
+
+### Regression
+
+Run:
+
+```powershell
+python run_semantic_answer_memory_regression_v098.py
+```
+
+The regression checks:
+
+```text
+CPU exact resolution
+宇宙 exact resolution
+暗号 exact resolution
+GPU paraphrase resolution
+FALSE truth-state blocking
+TRUE truth-state acceptance
+unknown-query fallback
+```
+
+### Runtime
+
+```powershell
+python chat.py
+```
+
+New runtime options:
+
+```text
+--answer-memory data/semantic_guided_qa_v097.json
+--answer-memory-min-score 7.0
+```
+
+v0.9.8 does not remove the language-model generator. It changes its role to a
+fallback path for queries that do not have a sufficiently strong Semantic
+Answer Memory match.
