@@ -823,10 +823,29 @@ def main() -> None:
                     "Restart chat.py to load a newly promoted model if promotion occurred."
                 )
             else:
-                print(
-                    f"SLEEP> pipeline failed with exit code {result.returncode}. "
-                    "Semantic Memory remains authoritative for non-consolidated records."
-                )
+                candidate = Path(args.sleep_candidate)
+                if candidate.exists():
+                    print("SLEEP> candidate exists; starting targeted retention repair.")
+                    repair = subprocess.run([
+                        sys.executable,
+                        "retention_repair_loop_v01013.py",
+                        "--source", str(args.model),
+                        "--candidate", str(args.sleep_candidate),
+                        "--memory", str(memory_path),
+                        "--tokenizer", str(args.tokenizer),
+                        "--benchmark", str(args.benchmark),
+                        "--manifest", str(args.active_model_manifest),
+                    ], check=False)
+                    if repair.returncode == 0:
+                        samples, adaptive, thresholds = rebuild()
+                        print("SLEEP> retention repair PASS; candidate promoted.")
+                    else:
+                        print("SLEEP> retention repair FAIL; candidate not promoted.")
+                else:
+                    print(
+                        f"SLEEP> pipeline failed with exit code {result.returncode} "
+                        "before final candidate creation."
+                    )
             continue
 
         if text == "/train":
