@@ -1,6 +1,6 @@
 # one_by_one_sleep_v01030.py
 #
-# LLM_SEM v0.10.35
+# LLM_SEM v0.10.36
 # Learn exactly one new QA row at a time.
 # After each row:
 #   - protect previously known/accepted rows with runtime replay,
@@ -21,7 +21,7 @@ from pathlib import Path
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.35 Progressive Partial Commit Sleep"
+        description="LLM_SEM v0.10.36 Latent-Progress Partial Commit Sleep"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -40,6 +40,8 @@ def parse_args():
     p.add_argument("--min-target-sim", type=float, default=0.70)
     p.add_argument("--min-target-gain", type=float, default=0.10)
     p.add_argument("--min-progress-gain", type=float, default=0.02)
+    p.add_argument("--min-target-nll-drop", type=float, default=0.05)
+    p.add_argument("--min-target-nll-rel-drop", type=float, default=0.05)
     p.add_argument("--max-protected-drop", type=float, default=0.05)
     p.add_argument("--allow-cpu", action="store_true")
     return p.parse_args()
@@ -83,8 +85,8 @@ def save_step_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.35",
-                "mode": "one-by-one-progressive-partial-commit",
+                "version": "v0.10.36",
+                "mode": "one-by-one-latent-progress-partial-commit",
                 "samples": rows,
             },
             ensure_ascii=False,
@@ -231,13 +233,15 @@ def main():
     new_rows = remaining_new_rows
 
     print("=" * 108)
-    print(" LLM_SEM v0.10.35 Progressive Partial Commit Sleep")
+    print(" LLM_SEM v0.10.36 Latent-Progress Partial Commit Sleep")
     print("=" * 108)
     print("Source model       :", source)
     print("New training rows  :", len(new_rows))
     print("Initial protected  :", len(protected_rows))
     print("Recovered PARTIAL  :", len(recovered_partial_rows))
     print("Progress gain min  :", args.min_progress_gain)
+    print("Target NLL drop min:", args.min_target_nll_drop)
+    print("Target NLL rel min :", args.min_target_nll_rel_drop)
     print("Epochs / row       :", args.epochs)
     print("Replay weight      :", args.replay_weight)
     print("New knowledge wt   :", args.new_weight)
@@ -372,6 +376,27 @@ def main():
             )
             target_gain = target_after - target_before
 
+            train_metrics = {}
+            if train_json.exists():
+                train_metrics = json.loads(
+                    train_json.read_text(encoding="utf-8")
+                )
+            target_nll_before = float(
+                train_metrics.get("target_nll_before", 0.0)
+            )
+            target_nll_after = float(
+                train_metrics.get("target_nll_after", target_nll_before)
+            )
+            target_nll_drop = target_nll_before - target_nll_after
+            target_nll_rel_drop = (
+                target_nll_drop / target_nll_before
+                if target_nll_before > 0.0
+                else 0.0
+            )
+            param_delta_rel = float(
+                train_metrics.get("trainable_param_relative_delta", 0.0)
+            )
+
             protected_failures = []
             max_drop = 0.0
             min_pair = 1.0
@@ -413,7 +438,16 @@ def main():
                 target_gain >= args.min_progress_gain
                 and target_after > target_before
             )
-            target_ok = reached_target or progressive_gain
+            latent_progress = (
+                target_nll_drop >= args.min_target_nll_drop
+                and target_nll_rel_drop >= args.min_target_nll_rel_drop
+                and param_delta_rel > 0.0
+            )
+            target_ok = (
+                reached_target
+                or progressive_gain
+                or latent_progress
+            )
             protected_ok = not protected_failures
 
             print(
@@ -421,7 +455,15 @@ def main():
                 f"{target_before:.6f}->{target_after:.6f} "
                 f"gain={target_gain:+.6f} "
                 f"reached={reached_target} "
-                f"progressive={progressive_gain}"
+                f"progressive={progressive_gain} "
+                f"latent={latent_progress}"
+            )
+            print(
+                "TRY NLL: "
+                f"{target_nll_before:.6f}->{target_nll_after:.6f} "
+                f"drop={target_nll_drop:+.6f} "
+                f"rel={target_nll_rel_drop:+.3%} "
+                f"param_delta_rel={param_delta_rel:.9f}"
             )
             print(
                 "TRY PROTECTION: "
@@ -465,7 +507,14 @@ def main():
                         "TARGET"
                         if reached_target
                         else "PROGRESS"
+                        if progressive_gain
+                        else "LATENT"
                     ),
+                    "target_nll_before": target_nll_before,
+                    "target_nll_after": target_nll_after,
+                    "target_nll_drop": target_nll_drop,
+                    "target_nll_rel_drop": target_nll_rel_drop,
+                    "param_delta_rel": param_delta_rel,
                 }
                 print("TRY RESULT: SAFE CANDIDATE")
             else:
@@ -496,6 +545,11 @@ def main():
                 "target_gain": float(best["target_gain"]),
                 "candidate": str(best["candidate"]),
                 "accept_kind": str(best["accept_kind"]),
+                "target_nll_before": float(best["target_nll_before"]),
+                "target_nll_after": float(best["target_nll_after"]),
+                "target_nll_drop": float(best["target_nll_drop"]),
+                "target_nll_rel_drop": float(best["target_nll_rel_drop"]),
+                "param_delta_rel": float(best["param_delta_rel"]),
             })
         else:
             print()
