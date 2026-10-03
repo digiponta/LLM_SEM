@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import torch
@@ -58,6 +59,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--allow-cpu", action="store_true")
     p.add_argument("--require-pass", action="store_true")
     p.add_argument("--train-blocks", type=int, default=1)
+    p.add_argument("--min-generation-sim", type=float, default=0.0)
     return p.parse_args()
 
 
@@ -213,6 +215,66 @@ def mean_qa_loss(model, tokenizer, rows, device):
     for row in rows:
         vals.append(float(answer_lm_loss(model, tokenizer, row, device).item()))
     return sum(vals) / len(vals) if vals else 0.0
+
+
+@torch.no_grad()
+def generation_similarity(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    row: dict,
+    device: torch.device,
+    *,
+    max_new_tokens: int = 96,
+) -> tuple[float, str]:
+    model.eval()
+    prompt = build_prompt(row)
+    prompt_ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
+    generated = model.generate(
+        prompt_ids,
+        max_new_tokens=max_new_tokens,
+        eos_id=tokenizer.eos_id,
+        temperature=0.2,
+        top_k=1,
+        repetition_penalty=1.10,
+    )
+    continuation = generated[len(prompt_ids):]
+    answer = tokenizer.decode(continuation, skip_special_tokens=True).strip()
+
+    expected = "".join(str(row["answer"]).split())
+    actual = "".join(answer.split())
+    ratio = SequenceMatcher(None, expected, actual).ratio() if expected or actual else 1.0
+    return ratio, answer
+
+
+@torch.no_grad()
+def mandatory_generation_report(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    rows: list[dict],
+    device: torch.device,
+) -> tuple[float, list[tuple[str, float, str, str]]]:
+    mandatory = [row for row in rows if bool(row.get("must_train", False))]
+    if not mandatory:
+        return 1.0, []
+    details = []
+    vals = []
+    for row in mandatory:
+        ratio, generated = generation_similarity(
+            model,
+            tokenizer,
+            row,
+            device,
+        )
+        vals.append(ratio)
+        details.append(
+            (
+                str(row["query"]),
+                ratio,
+                str(row["answer"]),
+                generated,
+            )
+        )
+    return sum(vals) / len(vals), details
 
 
 @torch.no_grad()
@@ -375,6 +437,12 @@ def main() -> None:
     sem_cos = mean_semantic_cosine(
         student, teacher, tokenizer, benchmark, device, args.alpha
     )
+    generation_sim, generation_details = mandatory_generation_report(
+        student,
+        tokenizer,
+        train_rows,
+        device,
+    )
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -391,13 +459,26 @@ def main() -> None:
     print("Train QA NLL    :", f"{before_train:.6f} -> {after_train:.6f}")
     print("Holdout QA NLL  :", f"{before_test:.6f} -> {after_test:.6f}")
     print("Semantic cosine :", f"{sem_cos:.6f}")
+    print("Mandatory generation similarity:", f"{generation_sim:.6f}")
     print("Saved checkpoint:", output)
     print("Selected epoch  :", best_epoch if best_state is not None else args.epochs)
+    if generation_details:
+        print()
+        print("Generation probe details")
+        print("------------------------")
+        for query, ratio, expected, generated in generation_details:
+            print(f"[{ratio:.3f}] {query}")
+            print("  expected :", expected)
+            print("  generated:", generated)
     print()
-    passed = after_test < before_test and sem_cos >= 0.98
+    passed = (
+        (not test_rows or after_test < before_test)
+        and sem_cos >= 0.98
+        and generation_sim >= args.min_generation_sim
+    )
     if passed:
         print("RESULT: PASS")
-        print("Answer supervision improved holdout NLL while preserving semantic geometry.")
+        print("Answer supervision passed NLL, semantic retention, and generation checks.")
     else:
         print("RESULT: REVIEW")
         print("Inspect holdout improvement and semantic retention before promotion.")
