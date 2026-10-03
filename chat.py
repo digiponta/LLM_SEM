@@ -666,7 +666,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.14 Answer-Preserving Retention Repair")
+    print(" LLM_SEM v0.10.15 Runtime Answer Retention")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
