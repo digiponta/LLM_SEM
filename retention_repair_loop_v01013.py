@@ -14,6 +14,7 @@ def main():
     p.add_argument("--tokenizer", default="model/tokenizer.json")
     p.add_argument("--benchmark", default="my_benchmark.csv")
     p.add_argument("--manifest", default="model/active-model.json")
+    p.add_argument("--sleep-dataset", default="data/semantic_sleep_qa_v0106.json")
     p.add_argument("--rounds", type=int, default=3)
     p.add_argument("--epochs", type=int, default=80)
     args = p.parse_args()
@@ -21,6 +22,7 @@ def main():
     source = Path(args.source)
     candidate = Path(args.candidate)
     current = candidate
+    answer_baseline = candidate
 
     for i in range(args.rounds + 1):
         check = subprocess.run([
@@ -32,6 +34,21 @@ def main():
             "--memory", args.memory,
         ], check=False)
         if check.returncode == 0:
+            answer_check = subprocess.run([
+                sys.executable, "answer_retention_v01014.py",
+                "--source", str(answer_baseline),
+                "--candidate", str(current),
+                "--dataset", args.sleep_dataset,
+                "--tokenizer", args.tokenizer,
+            ], check=False)
+
+            if answer_check.returncode != 0:
+                print(
+                    "REPAIR> semantic retention passed but answer retention failed; "
+                    "candidate will not be promoted."
+                )
+                raise SystemExit(1)
+
             if current != candidate:
                 candidate.write_bytes(current.read_bytes())
             promote = subprocess.run([
@@ -39,7 +56,7 @@ def main():
                 "--candidate", str(candidate),
                 "--manifest", args.manifest,
                 "--retention-pass",
-                "--note", "v0.10.13 retention repair",
+                "--note", "v0.10.14 answer-preserving retention repair",
             ], check=False)
             raise SystemExit(promote.returncode)
 
@@ -56,6 +73,7 @@ def main():
             "--memory", args.memory,
             "--tokenizer", args.tokenizer,
             "--benchmark", args.benchmark,
+            "--sleep-dataset", args.sleep_dataset,
             "--epochs", str(args.epochs),
         ], check=False)
         if repair.returncode != 0:
