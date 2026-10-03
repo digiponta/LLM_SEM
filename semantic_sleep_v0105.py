@@ -395,13 +395,13 @@ def main() -> None:
         final_candidate.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(semantic_candidate, final_candidate)
 
-    # Stage C: Surface-generation repair for high-similarity but imperfect outputs.
+    # Stage C: Optional selective surface repair with automatic rollback.
     surface_candidate = final_candidate.with_name(
         f"{final_candidate.stem}.surface{final_candidate.suffix}"
     )
     surface_cmd = [
         sys.executable,
-        "surface_generation_repair_v01019.py",
+        "selective_surface_repair_v01020.py",
         "--model", str(final_candidate),
         "--output", str(surface_candidate),
         "--dataset", args.sleep_dataset,
@@ -410,9 +410,9 @@ def main() -> None:
     ]
     if args.allow_cpu:
         surface_cmd.append("--allow-cpu")
-    run_step(surface_cmd, "surface generation repair")
+    run_step(surface_cmd, "selective surface repair")
     shutil.copy2(surface_candidate, final_candidate)
-    print("SLEEP> surface-repaired candidate:", final_candidate)
+    print("SLEEP> selected surface candidate:", final_candidate)
 
     # Stage D: Validate newly consolidated Semantic Memory against final model.
     if pending:
@@ -501,7 +501,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.19 surface generation repair",
+        "--note", "v0.10.20 selective surface repair",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
