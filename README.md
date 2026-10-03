@@ -3497,3 +3497,127 @@ python semantic_memory_batch_validate_v080.py \
 FAILED records move to `VALIDATING` only after the retry checkpoint is saved.
 Existing CONSOLIDATED records keep their lifecycle state and are used as
 protected semantic anchors during retry training.
+
+
+## v0.9.0 Truth-Aware Semantic Memory
+
+v0.9.0 separates semantic knowledge from its truth/reliability state. A record
+may now be retained even when the content is known to be false.
+
+Two independent axes are used:
+
+```text
+Lifecycle:
+ACTIVE / TRAINING / VALIDATING / FAILED / CONSOLIDATED
+
+Truth state:
+TRUE / FALSE / UNVERIFIED / CONTESTED / OUTDATED
+```
+
+Examples:
+
+```text
+ACTIVE + FALSE
+CONSOLIDATED + FALSE
+CONSOLIDATED + CONTESTED
+ACTIVE + OUTDATED
+```
+
+New Semantic Memory fields:
+
+```text
+truth_status
+truth_confidence
+provenance
+correction_target
+```
+
+Legacy JSONL records remain compatible and default to:
+
+```text
+truth_status = UNVERIFIED
+truth_confidence = 0.0
+```
+
+### Teaching false information intentionally
+
+Use the Truth-Aware CLI:
+
+```powershell
+python truth_aware_semantic_memory.py teach science \
+  "太陽は地球の周りを公転する" \
+  --truth FALSE \
+  --confidence 0.99 \
+  --provenance controlled-test \
+  --correction "地球は太陽の周りを公転する"
+```
+
+Inspect it:
+
+```powershell
+python truth_aware_semantic_memory.py show \
+  "太陽は地球の周りを公転する"
+```
+
+Change the truth state later without changing lifecycle:
+
+```powershell
+python truth_aware_semantic_memory.py mark \
+  "太陽は地球の周りを公転する" CONTESTED \
+  --confidence 0.60
+```
+
+### Runtime warning
+
+`chat.py` now checks exact truth metadata independently of lifecycle state.
+If an exact query is stored as FALSE, CONTESTED, OUTDATED, or UNVERIFIED, the
+runtime prints a `TRUTH>` warning. A FALSE record can therefore remain
+semantically available while the user is explicitly told that the stored
+information is incorrect.
+
+The chat command:
+
+```text
+/truth TRUE|FALSE|UNVERIFIED|CONTESTED|OUTDATED
+```
+
+updates the truth state of the previous utterance when it already exists in
+Semantic Memory.
+
+### Semantic Data v2
+
+`SemanticProposition` now also supports:
+
+```text
+truth_status
+truth_confidence
+provenance
+correction_target
+```
+
+so truth metadata can travel with structured propositions rather than being
+only a separate note.
+
+### Regression
+
+Run:
+
+```powershell
+python run_truth_aware_memory_regression_v090.py
+```
+
+The regression verifies that false information can be stored, warned about,
+corrected, consolidated, and later reclassified without deleting the semantic
+record.
+
+### Current scope
+
+v0.9.0 makes truth state explicit in Semantic Memory, Semantic Data v2, and the
+runtime notification path. The semantic topic itself can still be consolidated
+into model parameters using the existing consolidation pipeline.
+
+The truth state is currently retained as explicit structured metadata rather
+than a separately trained parametric truth-classification head. A future
+truth-head experiment can move TRUE/FALSE/CONTESTED discrimination itself into
+model parameters while preserving this explicit metadata as the auditable
+source of truth.
