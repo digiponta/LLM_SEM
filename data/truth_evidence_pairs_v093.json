@@ -1,0 +1,163 @@
+{
+  "schema_version": "0.9.3",
+  "description": "Controlled query/reference evidence pairs for supervised truth-state relation learning.",
+  "relation_types": [
+    "SUPPORTS",
+    "CONTRADICTS",
+    "UNCERTAIN",
+    "SUPERSEDED",
+    "DISPUTED"
+  ],
+  "samples": [
+    {
+      "query": "地球は太陽の周りを公転する",
+      "reference": "地球は太陽の周りを公転する",
+      "relation": "SUPPORTS",
+      "truth_status": "TRUE"
+    },
+    {
+      "query": "月は地球の衛星である",
+      "reference": "月は地球の衛星である",
+      "relation": "SUPPORTS",
+      "truth_status": "TRUE"
+    },
+    {
+      "query": "DNAは遺伝情報を担う",
+      "reference": "DNAは遺伝情報を担う",
+      "relation": "SUPPORTS",
+      "truth_status": "TRUE"
+    },
+    {
+      "query": "真空中の光速は有限である",
+      "reference": "真空中の光速は有限である",
+      "relation": "SUPPORTS",
+      "truth_status": "TRUE"
+    },
+    {
+      "query": "水は標準大気圧で約100度で沸騰する",
+      "reference": "標準大気圧では水の沸点は約100度である",
+      "relation": "SUPPORTS",
+      "truth_status": "TRUE"
+    },
+    {
+      "query": "太陽は地球の周りを公転する",
+      "reference": "地球は太陽の周りを公転する",
+      "relation": "CONTRADICTS",
+      "truth_status": "FALSE"
+    },
+    {
+      "query": "地球は平面である",
+      "reference": "地球はほぼ球形である",
+      "relation": "CONTRADICTS",
+      "truth_status": "FALSE"
+    },
+    {
+      "query": "月は自ら可視光を発して輝いている",
+      "reference": "月は主に太陽光を反射して見える",
+      "relation": "CONTRADICTS",
+      "truth_status": "FALSE"
+    },
+    {
+      "query": "真空中の光速は無限大である",
+      "reference": "真空中の光速は有限である",
+      "relation": "CONTRADICTS",
+      "truth_status": "FALSE"
+    },
+    {
+      "query": "DNAは金属でできている",
+      "reference": "DNAは核酸である",
+      "relation": "CONTRADICTS",
+      "truth_status": "FALSE"
+    },
+    {
+      "query": "この新材料は室温超伝導を示す",
+      "reference": "室温超伝導の再現確認はまだ得られていない",
+      "relation": "UNCERTAIN",
+      "truth_status": "UNVERIFIED"
+    },
+    {
+      "query": "未公開の実験で新粒子が発見された",
+      "reference": "その実験結果は公開検証されていない",
+      "relation": "UNCERTAIN",
+      "truth_status": "UNVERIFIED"
+    },
+    {
+      "query": "この未査読研究の結論は正しい",
+      "reference": "その研究はまだ査読を通過していない",
+      "relation": "UNCERTAIN",
+      "truth_status": "UNVERIFIED"
+    },
+    {
+      "query": "匿名情報による新発見は確認済みである",
+      "reference": "匿名情報だけでは独立確認できない",
+      "relation": "UNCERTAIN",
+      "truth_status": "UNVERIFIED"
+    },
+    {
+      "query": "この観測結果は確定している",
+      "reference": "この観測結果はまだ再現確認されていない",
+      "relation": "UNCERTAIN",
+      "truth_status": "UNVERIFIED"
+    },
+    {
+      "query": "冥王星は太陽系の第九惑星である",
+      "reference": "冥王星は2006年に準惑星へ分類変更された",
+      "relation": "SUPERSEDED",
+      "truth_status": "OUTDATED"
+    },
+    {
+      "query": "太陽系の惑星は九個である",
+      "reference": "現在の太陽系の惑星は八個とされる",
+      "relation": "SUPERSEDED",
+      "truth_status": "OUTDATED"
+    },
+    {
+      "query": "フロッピーディスクが主要な記憶媒体である",
+      "reference": "現在はSSDやフラッシュ媒体が一般的である",
+      "relation": "SUPERSEDED",
+      "truth_status": "OUTDATED"
+    },
+    {
+      "query": "インターネット接続はダイヤルアップが一般的である",
+      "reference": "現在はブロードバンド接続が一般的である",
+      "relation": "SUPERSEDED",
+      "truth_status": "OUTDATED"
+    },
+    {
+      "query": "携帯電話は主に音声通話だけに使われる",
+      "reference": "現在のスマートフォンは多数の用途に使われる",
+      "relation": "SUPERSEDED",
+      "truth_status": "OUTDATED"
+    },
+    {
+      "query": "量子力学の解釈は一つに決着している",
+      "reference": "量子力学には複数の解釈が存在し議論が続いている",
+      "relation": "DISPUTED",
+      "truth_status": "CONTESTED"
+    },
+    {
+      "query": "意識の本質は完全に解明されている",
+      "reference": "意識の理論には複数の立場があり議論が続いている",
+      "relation": "DISPUTED",
+      "truth_status": "CONTESTED"
+    },
+    {
+      "query": "人工知能に意識があるかどうかは決着している",
+      "reference": "AIの意識については合意が確立していない",
+      "relation": "DISPUTED",
+      "truth_status": "CONTESTED"
+    },
+    {
+      "query": "宇宙の始まり以前について単一の説明が確立している",
+      "reference": "宇宙初期以前の記述には複数の理論的立場がある",
+      "relation": "DISPUTED",
+      "truth_status": "CONTESTED"
+    },
+    {
+      "query": "量子測定問題の解釈は確定している",
+      "reference": "量子測定問題には複数の解釈がある",
+      "relation": "DISPUTED",
+      "truth_status": "CONTESTED"
+    }
+  ]
+}
