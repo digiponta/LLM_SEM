@@ -343,12 +343,15 @@ def build_runtime_replay_rows(
         ).strip()
         answer = stabilize_generated_answer(answer)
 
-        if answer:
+        canonical_answer = str(row.get("answer", "")).strip()
+        if canonical_answer:
             replay_rows.append({
                 "query": query,
                 "prompt": prompt,
-                "answer": answer,
+                "answer": canonical_answer,
+                "source_answer": answer,
                 "selected_label": str(top.label),
+                "target_kind": "TRUSTED_CANONICAL",
             })
 
     return replay_rows
@@ -361,30 +364,36 @@ def protected_distillation_loss(
     replay_row: dict,
     device: torch.device,
 ) -> torch.Tensor:
+    # v0.10.31 Canonical Replay Protection:
+    # keep the exact runtime /internal prompt, but supervise the student with
+    # the trusted canonical answer rather than copying the source model's
+    # possibly malformed generated text.
     prompt = str(replay_row["prompt"])
-    answer = str(replay_row["answer"])
+    canonical_answer = str(replay_row["answer"])
 
     prompt_ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
-    answer_ids = tokenizer.encode(answer, add_bos=False, add_eos=True)
+    answer_ids = tokenizer.encode(
+        canonical_answer,
+        add_bos=False,
+        add_eos=True,
+    )
     full = prompt_ids + answer_ids
 
     x = torch.tensor([full[:-1]], dtype=torch.long, device=device)
+    y = torch.tensor([full[1:]], dtype=torch.long, device=device)
+    logits = student(x)
+
+    token_loss = F.cross_entropy(
+        logits.reshape(-1, logits.size(-1)),
+        y.reshape(-1),
+        reduction="none",
+    ).view(1, -1)
+
     first_answer_target = max(0, len(prompt_ids) - 1)
-
-    student_logits = student(x)[:, first_answer_target:, :]
-    with torch.no_grad():
-        teacher_logits = teacher(x)[:, first_answer_target:, :]
-
-    if student_logits.numel() == 0:
-        return torch.tensor(0.0, device=device)
-
-    teacher_probs = F.softmax(teacher_logits, dim=-1)
-    student_log_probs = F.log_softmax(student_logits, dim=-1)
-    return F.kl_div(
-        student_log_probs,
-        teacher_probs,
-        reduction="batchmean",
-    ) / max(1, student_logits.size(1))
+    mask = torch.zeros_like(token_loss)
+    mask[:, first_answer_target:] = 1.0
+    denom = mask.sum().clamp_min(1.0)
+    return (token_loss * mask).sum() / denom
 
 def semantic_vector_grad(
     model: LanguageModel,
@@ -588,7 +597,7 @@ def main() -> None:
     before_test = mean_qa_loss(teacher, tokenizer, test_rows, device)
 
     print("=" * 100)
-    print(" LLM_SEM v0.10.29 Semantic-Guided Fine-Tuning + Training Trace")
+    print(" LLM_SEM v0.10.31 Canonical Runtime Replay Fine-Tuning")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
@@ -642,14 +651,16 @@ def main() -> None:
         print("  (none)")
 
     print()
-    print(f"[PROTECTED / RUNTIME_REPLAY] rows={len(runtime_replay_rows)}")
+    print(f"[PROTECTED / CANONICAL_RUNTIME_REPLAY] rows={len(runtime_replay_rows)}")
     if runtime_replay_rows:
         for index, row in enumerate(runtime_replay_rows, 1):
             print(
                 f"  {index:02d}. label={row.get('selected_label')!r}"
             )
-            print("      query :", row["query"])
-            print("      replay:", row["answer"])
+            print("      query          :", row["query"])
+            print("      source generated:", row.get("source_answer", ""))
+            print("      canonical target:", row["answer"])
+            print("      target kind     :", row.get("target_kind", "TRUSTED_CANONICAL"))
             print("      prompt:")
             for line in str(row["prompt"]).splitlines():
                 print("        " + line)
