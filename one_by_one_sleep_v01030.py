@@ -1,6 +1,6 @@
 # one_by_one_sleep_v01030.py
 #
-# LLM_SEM v0.10.34
+# LLM_SEM v0.10.35
 # Learn exactly one new QA row at a time.
 # After each row:
 #   - protect previously known/accepted rows with runtime replay,
@@ -21,7 +21,7 @@ from pathlib import Path
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.34 Partial Commit One-by-One Sleep"
+        description="LLM_SEM v0.10.35 Progressive Partial Commit Sleep"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -39,6 +39,7 @@ def parse_args():
     p.add_argument("--train-blocks", type=int, default=1)
     p.add_argument("--min-target-sim", type=float, default=0.70)
     p.add_argument("--min-target-gain", type=float, default=0.10)
+    p.add_argument("--min-progress-gain", type=float, default=0.02)
     p.add_argument("--max-protected-drop", type=float, default=0.05)
     p.add_argument("--allow-cpu", action="store_true")
     return p.parse_args()
@@ -82,8 +83,8 @@ def save_step_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.34",
-                "mode": "one-by-one-partial-commit",
+                "version": "v0.10.35",
+                "mode": "one-by-one-progressive-partial-commit",
                 "samples": rows,
             },
             ensure_ascii=False,
@@ -183,6 +184,28 @@ def main():
         for row in protected_rows
     }
 
+    previous_partial_queries = set()
+    previous_state_path = source.with_name(
+        f"{source.stem}.partial-state.json"
+    )
+    if previous_state_path.exists():
+        try:
+            previous_state = json.loads(
+                previous_state_path.read_text(encoding="utf-8")
+            )
+            if previous_state.get("state") == "PARTIAL":
+                previous_partial_queries = {
+                    str(item.get("query", ""))
+                    for item in previous_state.get("accepted_details", [])
+                    if str(item.get("query", ""))
+                }
+        except Exception as exc:
+            print(
+                "WARNING: failed to read previous PARTIAL state:",
+                previous_state_path,
+                exc,
+            )
+
     for row in new_rows:
         query = str(row.get("query", ""))
         detail = baseline_by_query.get(query)
@@ -191,7 +214,10 @@ def main():
             if detail is not None
             else 0.0
         )
-        if current_sim >= args.min_target_sim:
+        if (
+            current_sim >= args.min_target_sim
+            or query in previous_partial_queries
+        ):
             recovered = dict(row)
             recovered["must_train"] = False
             recovered["protected"] = True
@@ -205,12 +231,13 @@ def main():
     new_rows = remaining_new_rows
 
     print("=" * 108)
-    print(" LLM_SEM v0.10.34 Partial Commit One-by-One Sleep")
+    print(" LLM_SEM v0.10.35 Progressive Partial Commit Sleep")
     print("=" * 108)
     print("Source model       :", source)
     print("New training rows  :", len(new_rows))
     print("Initial protected  :", len(protected_rows))
     print("Recovered PARTIAL  :", len(recovered_partial_rows))
+    print("Progress gain min  :", args.min_progress_gain)
     print("Epochs / row       :", args.epochs)
     print("Replay weight      :", args.replay_weight)
     print("New knowledge wt   :", args.new_weight)
@@ -375,19 +402,26 @@ def main():
                         "pair": pair,
                     })
 
-            target_ok = (
+            reached_target = (
                 target_after >= args.min_target_sim
                 and (
                     target_gain >= args.min_target_gain
                     or target_after >= 0.999999
                 )
             )
+            progressive_gain = (
+                target_gain >= args.min_progress_gain
+                and target_after > target_before
+            )
+            target_ok = reached_target or progressive_gain
             protected_ok = not protected_failures
 
             print(
                 "TRY TARGET: "
                 f"{target_before:.6f}->{target_after:.6f} "
-                f"gain={target_gain:+.6f}"
+                f"gain={target_gain:+.6f} "
+                f"reached={reached_target} "
+                f"progressive={progressive_gain}"
             )
             print(
                 "TRY PROTECTION: "
@@ -427,6 +461,11 @@ def main():
                     "lr_scale": lr_scale,
                     "replay_weight": replay_weight,
                     "new_weight": new_weight,
+                    "accept_kind": (
+                        "TARGET"
+                        if reached_target
+                        else "PROGRESS"
+                    ),
                 }
                 print("TRY RESULT: SAFE CANDIDATE")
             else:
@@ -439,7 +478,8 @@ def main():
                 f"try={best['attempt']} "
                 f"canonical={best['target_before']:.6f}"
                 f"->{best['target_after']:.6f} "
-                f"gain={best['target_gain']:+.6f}"
+                f"gain={best['target_gain']:+.6f} "
+                f"kind={best['accept_kind']}"
             )
             current_source = Path(best["candidate"])
             accepted_row = dict(target)
@@ -455,6 +495,7 @@ def main():
                 "target_after": float(best["target_after"]),
                 "target_gain": float(best["target_gain"]),
                 "candidate": str(best["candidate"]),
+                "accept_kind": str(best["accept_kind"]),
             })
         else:
             print()
@@ -508,7 +549,7 @@ def main():
     state_json.write_text(
         json.dumps(
             {
-                "version": "v0.10.34",
+                "version": "v0.10.35",
                 "state": state,
                 "source": str(source),
                 "output": str(output),
