@@ -103,6 +103,23 @@ def parse_relation_fact(text: str) -> dict | None:
             "condition_polarity": pol,
             "relation_context": "",
         }
+
+    # LLM_TRY-compatible short fact: XはY
+    m_short_is = re.fullmatch(
+        r"^([^\s。、！？?]{1,32})は、?([^。、！？?]{1,80})$",
+        body,
+    )
+    if m_short_is:
+        pred, pol = _normalize_condition(condition)
+        return {
+            "subject": m_short_is.group(1).strip(),
+            "relation": "is",
+            "value": m_short_is.group(2).strip(" 、,"),
+            "condition": condition,
+            "condition_predicate": pred,
+            "condition_polarity": pol,
+            "relation_context": "",
+        }
     return None
 
 
@@ -161,3 +178,100 @@ def load_relation_facts(path: str | Path) -> list[dict]:
         if isinstance(row, dict) and row.get("subject") and row.get("relation") and row.get("value"):
             out.append(row)
     return out
+
+
+def facts_for_subject(path: str | Path, subject: str) -> list[dict]:
+    target = subject.strip().lower()
+    rows = []
+    seen = set()
+    for row in load_relation_facts(path):
+        if str(row.get("subject", "")).strip().lower() != target:
+            continue
+        key = (
+            str(row.get("relation", "")).strip().lower(),
+            str(row.get("value", "")).strip().lower(),
+            str(row.get("condition", "")).strip().lower(),
+            str(row.get("relation_context", "")).strip().lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(row)
+    return rows
+
+
+def compose_fact_answer(subject: str, values: list[str]) -> str:
+    """Compose multiple unconditional 'is' facts for one subject."""
+    clean = []
+    seen = set()
+    for value in values:
+        v = str(value).strip().rstrip("。")
+        if not v:
+            continue
+        key = v.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(v)
+
+    if not clean:
+        return ""
+    if len(clean) == 1:
+        return f"{subject}は、{clean[0]}である。"
+    if len(clean) == 2:
+        return f"{subject}は、{clean[0]}であり、{clean[1]}である。"
+    head = "、".join(f"{v}であり" for v in clean[:-1])
+    return f"{subject}は、{head}、{clean[-1]}である。"
+
+
+def compose_subject_facts(path: str | Path, subject: str) -> str:
+    """Render all learned facts for a subject, merging compatible 'is' facts."""
+    facts = facts_for_subject(path, subject)
+    if not facts:
+        return ""
+
+    unconditional_is = [
+        f for f in facts
+        if str(f.get("relation", "")) == "is"
+        and not str(f.get("condition", "")).strip()
+        and not str(f.get("relation_context", "")).strip()
+    ]
+    parts = []
+    if unconditional_is:
+        merged = compose_fact_answer(
+            subject,
+            [str(f.get("value", "")) for f in unconditional_is],
+        )
+        if merged:
+            parts.append(merged.rstrip("。"))
+
+    for fact in facts:
+        if fact in unconditional_is:
+            continue
+        relation = str(fact.get("relation", "")).strip()
+        value = str(fact.get("value", "")).strip()
+        condition = str(fact.get("condition", "")).strip()
+        context = str(fact.get("relation_context", "")).strip()
+
+        if relation == "definition":
+            body = f"{subject}とは、{value}"
+        elif relation == "includes":
+            prefix = f"{context}、" if context else ""
+            body = f"{subject}は、{prefix}{value}を含む"
+        elif relation == "belongs_to":
+            prefix = f"{context}、" if context else ""
+            body = f"{subject}は、{prefix}{value}に属する"
+        elif relation == "has":
+            prefix = f"{context}、" if context else ""
+            body = f"{subject}は、{prefix}{value}を持つ"
+        elif relation == "used_for":
+            prefix = f"{context}、" if context else ""
+            body = f"{subject}は、{prefix}{value}に利用される"
+        else:
+            body = f"{subject}の{relation}は、{value}である"
+
+        if condition:
+            body = f"{condition}のとき、{body}"
+        parts.append(body.rstrip("。"))
+
+    return "。".join(parts) + ("。" if parts else "")
