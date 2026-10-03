@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-improved-canonical", type=float, default=0.70)
     p.add_argument("--max-abnormal-ratio", type=float, default=0.02)
     p.add_argument("--max-repetition-ratio", type=float, default=0.20)
+    p.add_argument("--result-json", default="")
     p.add_argument("--allow-cpu", action="store_true")
     return p.parse_args()
 
@@ -174,6 +175,9 @@ def main() -> None:
     print("Min improved canon. :", args.min_improved_canonical)
 
     failures = 0
+    known_failures = 0
+    new_failures = 0
+    details = []
     source_canonical_vals = []
     candidate_canonical_vals = []
     pair_vals = []
@@ -234,6 +238,28 @@ def main() -> None:
             ok = retention_ok and quality_ok
 
         failures += int(not ok)
+        if not ok:
+            if source_is_known:
+                known_failures += 1
+            else:
+                new_failures += 1
+
+        details.append({
+            "query": query,
+            "mode": mode,
+            "passed": bool(ok),
+            "source_is_known": bool(source_is_known),
+            "source_candidate_similarity": pair_sim,
+            "source_canonical_similarity": source_canonical,
+            "candidate_canonical_similarity": candidate_canonical,
+            "canonical_drop": canonical_drop,
+            "canonical_gain": canonical_gain,
+            "source_label": source_label,
+            "candidate_label": candidate_label,
+            "source_margin": source_margin,
+            "candidate_margin": candidate_margin,
+            "candidate_answer": candidate_answer,
+        })
 
         print()
         print(
@@ -276,12 +302,38 @@ def main() -> None:
         f"{source_canonical_mean:.6f} -> {candidate_canonical_mean:.6f}",
     )
     print("Per-probe failures               :", failures)
+    print("Known/protected failures         :", known_failures)
+    print("New/improvement failures         :", new_failures)
     print(
         "Policy                           :",
         "preserve known answers; allow canonical-improving new knowledge",
     )
     result = failures == 0
     print("RESULT                           :", "PASS" if result else "FAIL")
+
+    if args.result_json:
+        import json
+        result_path = Path(args.result_json)
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps(
+                {
+                    "source": args.source,
+                    "candidate": args.candidate,
+                    "result": "PASS" if result else "FAIL",
+                    "failures": failures,
+                    "known_failures": known_failures,
+                    "new_failures": new_failures,
+                    "source_candidate_mean": pair_mean,
+                    "source_canonical_mean": source_canonical_mean,
+                    "candidate_canonical_mean": candidate_canonical_mean,
+                    "details": details,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ) + "\n",
+            encoding="utf-8",
+        )
 
     raise SystemExit(0 if result else 1)
 
