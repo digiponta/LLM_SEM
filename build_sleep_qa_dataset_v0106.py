@@ -57,6 +57,9 @@ def normalize_row(row: dict) -> dict | None:
         "intent": str(row.get("intent", "definition")).strip() or "definition",
         "concepts": concepts,
         "truth_status": str(row.get("truth_status", "UNVERIFIED")).strip().upper(),
+        "sleep_source": str(row.get("sleep_source", row.get("source", "base"))).strip() or "base",
+        "sleep_weight": float(row.get("sleep_weight", 1.0)),
+        "must_train": bool(row.get("must_train", False)),
     }
 
 
@@ -88,6 +91,9 @@ def relation_rows(path: Path, default_label: str = "unknown") -> list[dict]:
                 "intent": "definition",
                 "concepts": [subject],
                 "truth_status": "UNVERIFIED",
+                "sleep_source": "relation",
+                "sleep_weight": 8.0,
+                "must_train": True,
             })
     return rows
 
@@ -106,6 +112,10 @@ def main() -> None:
     rows = []
 
     for raw in load_base(Path(args.base)):
+        raw = dict(raw)
+        raw.setdefault("sleep_source", "base")
+        raw.setdefault("sleep_weight", 1.0)
+        raw.setdefault("must_train", False)
         row = normalize_row(raw)
         if row:
             rows.append(row)
@@ -113,6 +123,10 @@ def main() -> None:
     # Learned human answers come after base rows and replace exact-query duplicates.
     learned = []
     for raw in load_jsonl(Path(args.learned)):
+        raw = dict(raw)
+        raw["sleep_source"] = "learned"
+        raw["sleep_weight"] = 6.0
+        raw["must_train"] = True
         row = normalize_row(raw)
         if row:
             learned.append(row)
