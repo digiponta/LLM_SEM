@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.4 Natural Multi-Relation Composition
+# LLM_SEM v0.10.5 Semantic Sleep Consolidation
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -12,6 +12,8 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 import json
+import subprocess
+import sys
 
 import torch
 
@@ -112,6 +114,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--relation-memory", default=DEFAULT_RELATION_MEMORY)
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument("--answer-gate-min-score", type=float, default=12.0)
+    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0105.pt")
+    p.add_argument("--sleep-epochs", type=int, default=80)
     p.add_argument(
         "--policy",
         default=DEFAULT_POLICY,
@@ -641,7 +645,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.4 Natural Multi-Relation Composition")
+    print(" LLM_SEM v0.10.5 Semantic Sleep Consolidation")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -678,10 +682,11 @@ def main() -> None:
     print("  /teach <label|answer> teach a semantic label or trusted answer")
     print("  /forget              remove semantic teaching for previous utterance")
     print("  /train               reload learned memories (compatibility command)")
+    print("  /sleep               consolidate ACTIVE Semantic Memory into the internal LLM")
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.4 runtime policy")
+    print("  /runtime              show v0.10.5 runtime policy")
     print("  /quit")
     print()
 
@@ -706,6 +711,35 @@ def main() -> None:
                 )
                 if removed:
                     last_snapshot = None
+            continue
+
+        if text == "/sleep":
+            cmd = [
+                sys.executable,
+                "semantic_sleep_v0105.py",
+                "--memory", str(memory_path),
+                "--model", str(args.model),
+                "--tokenizer", str(args.tokenizer),
+                "--benchmark", str(args.benchmark),
+                "--candidate", str(args.sleep_candidate),
+                "--manifest", str(args.active_model_manifest),
+                "--epochs", str(args.sleep_epochs),
+            ]
+            print("SLEEP> Semantic Memory -> internal LLM consolidation")
+            print("SLEEP> source    :", args.model)
+            print("SLEEP> candidate :", args.sleep_candidate)
+            result = subprocess.run(cmd, check=False)
+            if result.returncode == 0:
+                samples, adaptive, thresholds = rebuild()
+                print(
+                    "SLEEP> pipeline completed. "
+                    "Restart chat.py to load a newly promoted model if promotion occurred."
+                )
+            else:
+                print(
+                    f"SLEEP> pipeline failed with exit code {result.returncode}. "
+                    "Semantic Memory remains authoritative for non-consolidated records."
+                )
             continue
 
         if text == "/train":
@@ -801,7 +835,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.10.4 Natural Multi-Relation Composition")
+            print("Runtime        : LLM_SEM v0.10.5 Semantic Sleep Consolidation")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
