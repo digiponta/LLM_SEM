@@ -4182,3 +4182,95 @@ CPUとは
 This smoke test validates the generation path only. It does not claim that the
 small base model's generated answer is factually correct or fluent; semantic
 routing and Truth-Aware metadata remain separate diagnostics.
+
+
+## v0.9.6 Semantic-Guided Answer Generation
+
+v0.9.5 restored the generation path, but the small language model often produced
+unrelated corpus fragments because semantic routing results were not used by the
+generator.
+
+v0.9.6 injects compact semantic guidance into the generation prompt.
+
+Runtime flow:
+
+```text
+User Query
+   |
+   v
+Semantic Router / Truth State / Intent / Concepts
+   |
+   v
+Compact Semantic Prompt
+   |
+   v
+LLM generate()
+   |
+   v
+AI> answer
+```
+
+Prompt shape:
+
+```text
+質問:<original query>
+分類:<selected semantic label>
+目的:<intent>
+概念:<concepts>
+真偽:<truth state or UNKNOWN>
+回答:
+```
+
+For example:
+
+```text
+質問:CPUとは
+分類:computer
+目的:definition
+概念:CPU
+真偽:UNKNOWN
+回答:
+```
+
+This keeps the prompt short because the current model is small and is not a
+general instruction-tuned model.
+
+The generator reports its mode:
+
+```text
+GEN> mode=semantic-guided label=computer intent=definition truth=UNKNOWN
+AI> ...
+```
+
+Semantic guidance is applied even when the router reports UNKNOWN_KNOWLEDGE or
+GATE_REVIEW; the gate remains a diagnostic rather than blocking conversation.
+
+### Regression
+
+Run:
+
+```powershell
+python run_semantic_guided_answer_regression_v096.py
+```
+
+The regression checks:
+
+```text
+1. semantic prompt construction
+2. selected label injection
+3. intent/concept injection
+4. truth-state injection
+5. visible generated continuation
+```
+
+Test cases:
+
+```text
+CPUとは
+宇宙とは
+暗号
+```
+
+A PASS proves that semantic guidance reaches the generation path. It does not
+yet guarantee factual or fluent answers; output-quality improvement remains a
+separate model-training problem.
