@@ -62,6 +62,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-generation-sim", type=float, default=0.0)
     p.add_argument("--result-json", default="")
     p.add_argument("--prefer-final-state", action="store_true")
+    p.add_argument("--concept-balanced", action="store_true")
     return p.parse_args()
 
 
@@ -90,6 +91,81 @@ def load_dataset(path: Path) -> list[dict]:
     if not rows:
         raise RuntimeError("No valid QA rows.")
     return rows
+
+
+def row_concept(row: dict) -> str:
+    concepts = [str(x).strip() for x in row.get("concepts", []) if str(x).strip()]
+    return concepts[0] if concepts else str(row.get("query", "")).strip()
+
+
+def concept_balanced_qa_loss(model, tokenizer, rows, device):
+    mandatory = [row for row in rows if bool(row.get("must_train", False))]
+    optional = [row for row in rows if not bool(row.get("must_train", False))]
+
+    concept_groups: dict[str, list[torch.Tensor]] = {}
+    for row in mandatory:
+        concept_groups.setdefault(row_concept(row), []).append(
+            answer_lm_loss(model, tokenizer, row, device)
+        )
+
+    concept_losses = [
+        torch.stack(losses).mean()
+        for losses in concept_groups.values()
+        if losses
+    ]
+    mandatory_loss = (
+        torch.stack(concept_losses).mean()
+        if concept_losses
+        else None
+    )
+
+    optional_losses = [
+        answer_lm_loss(model, tokenizer, row, device)
+        for row in optional
+    ]
+    optional_loss = (
+        torch.stack(optional_losses).mean()
+        if optional_losses
+        else None
+    )
+
+    if mandatory_loss is not None and optional_loss is not None:
+        return 0.8 * mandatory_loss + 0.2 * optional_loss
+    if mandatory_loss is not None:
+        return mandatory_loss
+    if optional_loss is not None:
+        return optional_loss
+    return torch.tensor(0.0, device=device)
+
+
+def concept_generation_report(model, tokenizer, rows, device):
+    mandatory = [row for row in rows if bool(row.get("must_train", False))]
+    grouped: dict[str, list[dict]] = {}
+    for row in mandatory:
+        grouped.setdefault(row_concept(row), []).append(row)
+
+    details = []
+    concept_scores = []
+    for concept, concept_rows in grouped.items():
+        sims = []
+        generated_rows = []
+        for row in concept_rows:
+            sim, generated = generation_similarity(
+                model, tokenizer, row, device
+            )
+            sims.append(sim)
+            generated_rows.append((str(row["query"]), sim, generated))
+        concept_sim = sum(sims) / len(sims) if sims else 0.0
+        concept_scores.append(concept_sim)
+        details.append({
+            "concept": concept,
+            "similarity": concept_sim,
+            "rows": generated_rows,
+        })
+
+    mean_sim = sum(concept_scores) / len(concept_scores) if concept_scores else 1.0
+    min_sim = min(concept_scores, default=1.0)
+    return mean_sim, min_sim, details
 
 
 def split_rows(rows: list[dict], holdout: float, seed: int):
@@ -401,6 +477,7 @@ def main() -> None:
     print("Semantic LR         :", args.learning_rate)
     print("LM-head LR          :", args.lm_head_lr)
     print("Preserve weight     :", args.preserve_weight)
+    print("Concept balanced    :", args.concept_balanced)
     print("Before train QA NLL :", f"{before_train:.6f}")
     print("Before holdout NLL  :", f"{before_test:.6f}")
     print()
@@ -415,16 +492,21 @@ def main() -> None:
         student.train()
         optimizer.zero_grad(set_to_none=True)
 
-        qa_losses = []
-        qa_weights = []
-        for row in train_rows:
-            qa_losses.append(answer_lm_loss(student, tokenizer, row, device))
-            qa_weights.append(max(0.01, float(row.get("sleep_weight", 1.0))))
-        weighted = [
-            loss * weight
-            for loss, weight in zip(qa_losses, qa_weights)
-        ]
-        qa_loss = torch.stack(weighted).sum() / sum(qa_weights)
+        if args.concept_balanced:
+            qa_loss = concept_balanced_qa_loss(
+                student, tokenizer, train_rows, device
+            )
+        else:
+            qa_losses = []
+            qa_weights = []
+            for row in train_rows:
+                qa_losses.append(answer_lm_loss(student, tokenizer, row, device))
+                qa_weights.append(max(0.01, float(row.get("sleep_weight", 1.0))))
+            weighted = [
+                loss * weight
+                for loss, weight in zip(qa_losses, qa_weights)
+            ]
+            qa_loss = torch.stack(weighted).sum() / sum(qa_weights)
 
         preserve_losses = []
         for row in benchmark:
@@ -500,6 +582,14 @@ def main() -> None:
     generation_min = (
         min((ratio for _, ratio, _, _ in generation_details), default=1.0)
     )
+    concept_generation_mean, concept_generation_min, concept_generation_details = (
+        concept_generation_report(
+            student,
+            tokenizer,
+            train_rows,
+            device,
+        )
+    )
     quality_details = [
         generation_quality(generated)
         for _, _, _, generated in generation_details
@@ -534,6 +624,8 @@ def main() -> None:
     print("Semantic cosine :", f"{sem_cos:.6f}")
     print("Mandatory generation similarity:", f"{generation_sim:.6f}")
     print("Mandatory minimum similarity   :", f"{generation_min:.6f}")
+    print("Concept generation mean        :", f"{concept_generation_mean:.6f}")
+    print("Concept generation minimum     :", f"{concept_generation_min:.6f}")
     print("Natural termination rate       :", f"{termination_rate:.6f}")
     print("Maximum abnormal-char ratio    :", f"{abnormal_ratio_max:.6f}")
     print("Maximum repetition ratio       :", f"{repetition_ratio_max:.6f}")
@@ -575,6 +667,9 @@ def main() -> None:
                     "semantic_cosine": sem_cos,
                     "generation_similarity_mean": generation_sim,
                     "generation_similarity_min": generation_min,
+                    "concept_generation_mean": concept_generation_mean,
+                    "concept_generation_min": concept_generation_min,
+                    "concept_generation_details": concept_generation_details,
                     "termination_rate": termination_rate,
                     "abnormal_ratio_max": abnormal_ratio_max,
                     "repetition_ratio_max": repetition_ratio_max,
