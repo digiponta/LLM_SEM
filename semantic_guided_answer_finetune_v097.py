@@ -271,6 +271,24 @@ def answer_lm_loss(
     return (token_loss * mask).sum() / denom
 
 
+
+@torch.no_grad()
+def mandatory_qa_nll(model, tokenizer, rows, device):
+    mandatory = [row for row in rows if bool(row.get("must_train", False))]
+    if not mandatory:
+        return 0.0, []
+    details = []
+    vals = []
+    for row in mandatory:
+        value = float(answer_lm_loss(model, tokenizer, row, device).item())
+        vals.append(value)
+        details.append({
+            "query": str(row["query"]),
+            "nll": value,
+            "answer": str(row["answer"]),
+        })
+    return sum(vals) / len(vals), details
+
 @torch.no_grad()
 def semantic_vector(
     model: LanguageModel,
@@ -619,6 +637,16 @@ def main() -> None:
 
     semantic_params, lm_head_params = configure_trainable(student, args.train_blocks)
 
+    initial_trainable = {
+        name: tensor.detach().cpu().clone()
+        for name, tensor in student.state_dict().items()
+        if (
+            name.startswith("blocks.")
+            or name.startswith("final_norm.")
+            or name.startswith("lm_head.")
+        )
+    }
+
     teacher_vectors = {
         row.text: semantic_vector(
             teacher, tokenizer, row.text, device, args.alpha
@@ -656,9 +684,12 @@ def main() -> None:
 
     before_train = mean_qa_loss(teacher, tokenizer, train_rows, device)
     before_test = mean_qa_loss(teacher, tokenizer, test_rows, device)
+    mandatory_nll_before, mandatory_nll_before_details = mandatory_qa_nll(
+        teacher, tokenizer, train_rows, device
+    )
 
     print("=" * 100)
-    print(" LLM_SEM v0.10.33 Runtime-Aligned New-Knowledge Fine-Tuning")
+    print(" LLM_SEM v0.10.36 Latent-Progress Diagnostic Fine-Tuning")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
@@ -861,6 +892,27 @@ def main() -> None:
 
     after_train = mean_qa_loss(student, tokenizer, train_rows, device)
     after_test = mean_qa_loss(student, tokenizer, test_rows, device)
+    mandatory_nll_after, mandatory_nll_after_details = mandatory_qa_nll(
+        student, tokenizer, train_rows, device
+    )
+
+    delta_sq = 0.0
+    base_sq = 0.0
+    for name, tensor in student.state_dict().items():
+        if name not in initial_trainable:
+            continue
+        current = tensor.detach().cpu().float()
+        initial = initial_trainable[name].float()
+        diff = current - initial
+        delta_sq += float((diff * diff).sum().item())
+        base_sq += float((initial * initial).sum().item())
+    trainable_param_delta_l2 = delta_sq ** 0.5
+    trainable_param_relative_delta = (
+        trainable_param_delta_l2 / (base_sq ** 0.5)
+        if base_sq > 0.0
+        else 0.0
+    )
+
     sem_cos = mean_semantic_cosine(
         student, teacher, tokenizer, benchmark, device, args.alpha
     )
@@ -912,6 +964,8 @@ def main() -> None:
     print("----------------")
     print("Train QA NLL    :", f"{before_train:.6f} -> {after_train:.6f}")
     print("Holdout QA NLL  :", f"{before_test:.6f} -> {after_test:.6f}")
+    print("Target QA NLL   :", f"{mandatory_nll_before:.6f} -> {mandatory_nll_after:.6f}")
+    print("Trainable delta :", f"L2={trainable_param_delta_l2:.6f} rel={trainable_param_relative_delta:.9f}")
     print("Semantic cosine :", f"{sem_cos:.6f}")
     print("Mandatory generation similarity:", f"{generation_sim:.6f}")
     print("Mandatory minimum similarity   :", f"{generation_min:.6f}")
@@ -955,6 +1009,12 @@ def main() -> None:
                     "train_nll_after": after_train,
                     "holdout_nll_before": before_test,
                     "holdout_nll_after": after_test,
+                    "target_nll_before": mandatory_nll_before,
+                    "target_nll_after": mandatory_nll_after,
+                    "target_nll_before_details": mandatory_nll_before_details,
+                    "target_nll_after_details": mandatory_nll_after_details,
+                    "trainable_param_delta_l2": trainable_param_delta_l2,
+                    "trainable_param_relative_delta": trainable_param_relative_delta,
                     "semantic_cosine": sem_cos,
                     "protected_distillation_loss": float(protected_loss.item()),
                     "new_knowledge_weight": float(args.new_knowledge_weight),
