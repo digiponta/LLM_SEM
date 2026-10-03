@@ -562,24 +562,26 @@ def main() -> None:
                     )
                     break
 
-                stall_rounds = next_stall_count(
-                    previous_mean,
-                    mean_sim,
-                    stall_rounds,
-                    min_improvement=args.sleep_min_improvement,
-                )
-
-                if stall_rounds >= args.sleep_max_stall_rounds:
-                    print(
-                        "SLEEP> STOP: generation similarity improvement stalled "
-                        f"for {stall_rounds} rounds."
-                    )
-                    return
-
-                previous_mean = mean_sim
                 if not incremental_mode:
+                    stall_rounds = next_stall_count(
+                        previous_mean,
+                        mean_sim,
+                        stall_rounds,
+                        min_improvement=args.sleep_min_improvement,
+                    )
+
+                    if stall_rounds >= args.sleep_max_stall_rounds:
+                        print(
+                            "SLEEP> STOP: generation similarity improvement stalled "
+                            f"for {stall_rounds} rounds."
+                        )
+                        return
+
+                    previous_mean = mean_sim
                     current_source = out
                     last_round_checkpoint = out
+                else:
+                    previous_mean = mean_sim
 
         if not completed:
             if incremental_mode and best_safe_checkpoint is not None:
