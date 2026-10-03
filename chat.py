@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.24 Protected Incremental Sleep
+# LLM_SEM v0.10.25 Runtime-Constrained Incremental Sleep
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -115,8 +115,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sleep-dataset", default="data/semantic_sleep_qa_v0106.json")
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument("--answer-gate-min-score", type=float, default=12.0)
-    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0124.pt")
-    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0124.pt")
+    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0125.pt")
+    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0125.pt")
     p.add_argument("--sleep-qa-epochs", type=int, default=240)
     p.add_argument("--sleep-epochs", type=int, default=80)
     p.add_argument("--sleep-max-rounds", type=int, default=5)
@@ -669,7 +669,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.24 Protected Incremental Sleep")
+    print(" LLM_SEM v0.10.25 Runtime-Constrained Incremental Sleep")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -712,7 +712,7 @@ def main() -> None:
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.24 runtime policy")
+    print("  /runtime              show v0.10.25 runtime policy")
     print("  /quit")
     print()
 
@@ -847,23 +847,11 @@ def main() -> None:
             else:
                 candidate = Path(args.sleep_candidate)
                 if candidate.exists():
-                    print("SLEEP> candidate exists; starting targeted retention repair.")
-                    repair = subprocess.run([
-                        sys.executable,
-                        "retention_repair_loop_v01013.py",
-                        "--source", str(args.model),
-                        "--candidate", str(args.sleep_candidate),
-                        "--memory", str(memory_path),
-                        "--tokenizer", str(args.tokenizer),
-                        "--benchmark", str(args.benchmark),
-                        "--manifest", str(args.active_model_manifest),
-                        "--sleep-dataset", str(args.sleep_dataset),
-                    ], check=False)
-                    if repair.returncode == 0:
-                        samples, adaptive, thresholds = rebuild()
-                        print("SLEEP> retention repair PASS; candidate promoted.")
-                    else:
-                        print("SLEEP> retention repair FAIL; candidate not promoted.")
+                    print(
+                        "SLEEP> runtime-constrained pipeline rejected the candidate; "
+                        "legacy automatic retention repair is disabled."
+                    )
+                    print("SLEEP> source model preserved:", args.model)
                 else:
                     print(
                         f"SLEEP> pipeline failed with exit code {result.returncode} "
@@ -964,7 +952,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.10.24 Protected Incremental Sleep")
+            print("Runtime        : LLM_SEM v0.10.25 Runtime-Constrained Incremental Sleep")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
