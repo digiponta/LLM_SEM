@@ -1,8 +1,7 @@
 # build_incremental_sleep_dataset_v01023.py
 #
 # LLM_SEM v0.10.23
-# Build a QA sleep dataset containing only failed/new mandatory concepts,
-# while retaining ordinary optional/base rows for stabilization.
+# Build a QA sleep dataset with failed/new concepts as train targets and\n# already-passing concepts as protected distillation anchors.
 
 from __future__ import annotations
 
@@ -53,23 +52,32 @@ def main():
     protected = 0
     mandatory_selected = 0
 
-    for row in samples:
+    for raw in samples:
+        row = dict(raw)
         must_train = bool(row.get("must_train", False))
         if not must_train:
+            row["protected"] = False
             selected.append(row)
             continue
 
         concept = concept_of(row)
         if concept in failed_concepts:
+            row["protected"] = False
             selected.append(row)
             mandatory_selected += 1
         else:
+            # Keep old knowledge in the training dataset, but do not apply
+            # canonical QA supervision again. The source model acts as the
+            # teacher through protected-logit distillation.
+            row["must_train"] = False
+            row["protected"] = True
+            selected.append(row)
             protected += 1
 
     out = dict(obj)
     out["samples"] = selected
     out["incremental_sleep"] = {
-        "version": "v0.10.23",
+        "version": "v0.10.24",
         "failed_concepts": sorted(failed_concepts),
         "protected_mandatory_rows": protected,
         "selected_mandatory_rows": mandatory_selected,
@@ -84,12 +92,12 @@ def main():
     )
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.23 Incremental Sleep Dataset Builder")
+    print(" LLM_SEM v0.10.24 Protected Incremental Sleep Dataset Builder")
     print("=" * 96)
     print("Failed/new concepts       :", ", ".join(sorted(failed_concepts)) or "(none)")
     print("Protected mandatory rows  :", protected)
     print("Selected mandatory rows   :", mandatory_selected)
-    print("Optional/base rows retained:", len(selected) - mandatory_selected)
+    print("Protected anchor rows      :", protected)\n    print("Optional/base rows retained:", len(selected) - mandatory_selected - protected)
     print("Output                    :", output_path)
 
     if not failed_concepts or mandatory_selected == 0:
