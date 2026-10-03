@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.16 Multi-Knowledge Internalization
+# LLM_SEM v0.10.17 Multi-Knowledge Balanced Sleep
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -115,13 +115,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sleep-dataset", default="data/semantic_sleep_qa_v0106.json")
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument("--answer-gate-min-score", type=float, default=12.0)
-    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0116.pt")
-    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0116.pt")
+    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0117.pt")
+    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0117.pt")
     p.add_argument("--sleep-qa-epochs", type=int, default=240)
     p.add_argument("--sleep-epochs", type=int, default=80)
     p.add_argument("--sleep-max-rounds", type=int, default=5)
     p.add_argument("--sleep-target-mean", type=float, default=0.80)
     p.add_argument("--sleep-target-min", type=float, default=0.60)
+    p.add_argument("--sleep-concept-target-mean", type=float, default=0.75)
+    p.add_argument("--sleep-concept-target-min", type=float, default=0.70)
     p.add_argument("--sleep-min-improvement", type=float, default=0.01)
     p.add_argument("--sleep-max-stall-rounds", type=int, default=2)
     p.add_argument("--sleep-min-termination-rate", type=float, default=1.0)
@@ -710,7 +712,7 @@ def main() -> None:
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.16 runtime policy")
+    print("  /runtime              show v0.10.17 runtime policy")
     print("  /quit")
     print()
 
@@ -824,6 +826,8 @@ def main() -> None:
                 "--sleep-max-rounds", str(args.sleep_max_rounds),
                 "--sleep-target-mean", str(args.sleep_target_mean),
                 "--sleep-target-min", str(args.sleep_target_min),
+                "--sleep-concept-target-mean", str(args.sleep_concept_target_mean),
+                "--sleep-concept-target-min", str(args.sleep_concept_target_min),
                 "--sleep-min-improvement", str(args.sleep_min_improvement),
                 "--sleep-max-stall-rounds", str(args.sleep_max_stall_rounds),
                 "--sleep-min-termination-rate", str(args.sleep_min_termination_rate),
