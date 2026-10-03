@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.5 Semantic Sleep Consolidation
+# LLM_SEM v0.10.6 Full Sleep Consolidation
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -114,7 +114,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--relation-memory", default=DEFAULT_RELATION_MEMORY)
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument("--answer-gate-min-score", type=float, default=12.0)
-    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0105.pt")
+    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0106.pt")
+    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0106.pt")
+    p.add_argument("--sleep-qa-epochs", type=int, default=80)
     p.add_argument("--sleep-epochs", type=int, default=80)
     p.add_argument(
         "--policy",
@@ -645,7 +647,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.5 Semantic Sleep Consolidation")
+    print(" LLM_SEM v0.10.6 Full Sleep Consolidation")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -686,7 +688,7 @@ def main() -> None:
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.5 runtime policy")
+    print("  /runtime              show v0.10.6 runtime policy")
     print("  /quit")
     print()
 
@@ -722,8 +724,13 @@ def main() -> None:
                 "--tokenizer", str(args.tokenizer),
                 "--benchmark", str(args.benchmark),
                 "--candidate", str(args.sleep_candidate),
+                "--semantic-candidate", str(args.sleep_semantic_candidate),
                 "--manifest", str(args.active_model_manifest),
+                "--base-answer-memory", str(args.answer_memory),
+                "--learned-answer-memory", str(args.learned_answer_memory),
+                "--relation-memory", str(args.relation_memory),
                 "--epochs", str(args.sleep_epochs),
+                "--qa-epochs", str(args.sleep_qa_epochs),
             ]
             print("SLEEP> Semantic Memory -> internal LLM consolidation")
             print("SLEEP> source    :", args.model)
@@ -835,7 +842,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.10.5 Semantic Sleep Consolidation")
+            print("Runtime        : LLM_SEM v0.10.6 Full Sleep Consolidation")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
