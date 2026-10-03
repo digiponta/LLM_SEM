@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.1 Relation Teaching Integration
+# LLM_SEM v0.10.2 LLM_TRY Command Compatibility
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -19,6 +19,7 @@ from adaptive_semantic_learning import (
     append_semantic_memory,
     exact_memory_label,
     exact_truth_record,
+    forget_semantic_memory,
     load_semantic_memory,
     memory_status_counts,
     merge_samples,
@@ -593,11 +594,12 @@ def main() -> None:
     base_samples = load_benchmark(args.benchmark)
     unknown_samples = load_benchmark(args.unknown_benchmark)
     memory_path = Path(args.memory)
-    answer_memory_paths = [args.answer_memory]
-    if Path(args.unified_answer_memory).exists():
-        answer_memory_paths.append(args.unified_answer_memory)
+    answer_memory_paths = []
     if Path(args.learned_answer_memory).exists():
         answer_memory_paths.append(args.learned_answer_memory)
+    if Path(args.unified_answer_memory).exists():
+        answer_memory_paths.append(args.unified_answer_memory)
+    answer_memory_paths.append(args.answer_memory)
     answer_memory = SemanticAnswerMemory.load_many(answer_memory_paths)
     learning_enabled = bool(args.learn)
     semantic_v2_enabled = bool(args.semantic_v2)
@@ -634,7 +636,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.1 Relation Teaching Integration")
+    print(" LLM_SEM v0.10.2 LLM_TRY Command Compatibility")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -668,11 +670,13 @@ def main() -> None:
     print("Commands:")
     print("  /learn on|off|status")
     print("  /semantic on|off|status")
-    print("  /teach <label>       teach the previous user utterance")
+    print("  /teach <label|answer> teach a semantic label or trusted answer")
+    print("  /forget              remove semantic teaching for previous utterance")
+    print("  /train               reload learned memories (compatibility command)")
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.1 runtime policy")
+    print("  /runtime              show v0.10.2 runtime policy")
     print("  /quit")
     print()
 
@@ -683,6 +687,46 @@ def main() -> None:
 
         if text in ("/quit", "/exit", "quit", "exit"):
             break
+
+        if text == "/forget":
+            if last_text is None:
+                print("No previous utterance is available to forget.")
+            else:
+                removed = forget_semantic_memory(memory_path, last_text)
+                samples, adaptive, thresholds = rebuild()
+                print(
+                    f"Forgot semantic teaching for {last_text!r}."
+                    if removed else
+                    "No matching Semantic Memory record."
+                )
+                if removed:
+                    last_snapshot = None
+            continue
+
+        if text == "/train":
+            answer_memory_paths = []
+            if Path(args.learned_answer_memory).exists():
+                answer_memory_paths.append(args.learned_answer_memory)
+            if Path(args.unified_answer_memory).exists():
+                answer_memory_paths.append(args.unified_answer_memory)
+            answer_memory_paths.append(args.answer_memory)
+            answer_memory = SemanticAnswerMemory.load_many(answer_memory_paths)
+            samples, adaptive, thresholds = rebuild()
+            print(
+                f"TRAIN> memories reloaded: adaptive={len(adaptive)} "
+                f"answer_entries={len(answer_memory.rows)}"
+            )
+            print("TRAIN> no gradient update; use consolidation/fine-tuning scripts for model training.")
+            continue
+
+        if text.startswith("/teach "):
+            teach_value = text.split(maxsplit=1)[1].strip()
+            if (
+                len(teach_value) >= 16
+                or any(mark in teach_value for mark in ("。", "、", "です", "である", "は、", "を", "する"))
+            ):
+                text = "/teach-answer " + teach_value
+                print("TCH> interpreted /teach argument as a trusted answer.")
 
         if text.startswith("/learn"):
             parts = text.split()
@@ -752,7 +796,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.10.1 Relation Teaching Integration")
+            print("Runtime        : LLM_SEM v0.10.2 LLM_TRY Command Compatibility")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
