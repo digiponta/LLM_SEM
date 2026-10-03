@@ -395,7 +395,26 @@ def main() -> None:
         final_candidate.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(semantic_candidate, final_candidate)
 
-    # Stage C: Validate newly consolidated Semantic Memory against final model.
+    # Stage C: Surface-generation repair for high-similarity but imperfect outputs.
+    surface_candidate = final_candidate.with_name(
+        f"{final_candidate.stem}.surface{final_candidate.suffix}"
+    )
+    surface_cmd = [
+        sys.executable,
+        "surface_generation_repair_v01019.py",
+        "--model", str(final_candidate),
+        "--output", str(surface_candidate),
+        "--dataset", args.sleep_dataset,
+        "--benchmark", args.benchmark,
+        "--tokenizer", args.tokenizer,
+    ]
+    if args.allow_cpu:
+        surface_cmd.append("--allow-cpu")
+    run_step(surface_cmd, "surface generation repair")
+    shutil.copy2(surface_candidate, final_candidate)
+    print("SLEEP> surface-repaired candidate:", final_candidate)
+
+    # Stage D: Validate newly consolidated Semantic Memory against final model.
     if pending:
         validate_cmd = [
             sys.executable,
@@ -421,7 +440,7 @@ def main() -> None:
                 print("  -", row.get("status"), row.get("label"), repr(row.get("text")))
             return
 
-    # Stage D: Retention/regression against consolidated knowledge.
+    # Stage E: Retention/regression against consolidated knowledge.
     consolidated = consolidated_records(memory)
     if consolidated:
         retention_cmd = [
@@ -437,7 +456,7 @@ def main() -> None:
             retention_cmd.append("--allow-cpu")
         run_step(retention_cmd, "consolidated retention validation")
 
-    # Stage E: Answer/runtime/multi-knowledge retention gates.
+    # Stage F: Answer/runtime/multi-knowledge retention gates.
     answer_retention_cmd = [
         sys.executable,
         "answer_retention_v01014.py",
@@ -475,14 +494,14 @@ def main() -> None:
         multi_knowledge_cmd.append("--allow-cpu")
     run_step(multi_knowledge_cmd, "multi-knowledge internalization")
 
-    # Stage F: Promote only after every retention/internalization gate.
+    # Stage G: Promote only after every retention/internalization gate.
     promote_cmd = [
         sys.executable,
         "promote_active_model_v094.py",
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.18 improvement-aware runtime retention",
+        "--note", "v0.10.19 surface generation repair",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
