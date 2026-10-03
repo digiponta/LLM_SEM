@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.9.7 Semantic-Guided Answer Fine-Tuning Runtime
+# LLM_SEM v0.9.8 Semantic Answer Memory Runtime
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -52,6 +52,11 @@ from semantic_proposition_v036 import (
     refine_purpose,
 )
 from tokenizer import Tokenizer
+from semantic_answer_memory_v098 import (
+    DEFAULT_ANSWER_MEMORY,
+    SemanticAnswerMemory,
+    truth_allows_answer_memory,
+)
 
 
 DEFAULT_MODEL = "model/model-gpu-v0.4.pt"
@@ -91,6 +96,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--benchmark", default=DEFAULT_BENCHMARK)
     p.add_argument("--unknown-benchmark", default=DEFAULT_UNKNOWN_BENCHMARK)
     p.add_argument("--memory", default=DEFAULT_MEMORY)
+    p.add_argument("--answer-memory", default=DEFAULT_ANSWER_MEMORY)
+    p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument(
         "--policy",
         default=DEFAULT_POLICY,
@@ -578,6 +585,7 @@ def main() -> None:
     base_samples = load_benchmark(args.benchmark)
     unknown_samples = load_benchmark(args.unknown_benchmark)
     memory_path = Path(args.memory)
+    answer_memory = SemanticAnswerMemory.load(args.answer_memory)
     learning_enabled = bool(args.learn)
     semantic_v2_enabled = bool(args.semantic_v2)
     composition_enabled = bool(args.composition)
@@ -613,7 +621,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.9.7 Semantic-Guided Answer Fine-Tuning Runtime")
+    print(" LLM_SEM v0.9.8 Semantic Answer Memory Runtime")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -637,6 +645,8 @@ def main() -> None:
     print("Override sim     :", args.override_sim)
     print("Answer generation:", "ON" if args.answer else "OFF")
     print("Max new tokens   :", args.max_new_tokens)
+    print("Answer memory    :", args.answer_memory)
+    print("Answer entries   :", len(answer_memory.rows))
     print()
     print("Commands:")
     print("  /learn on|off|status")
@@ -644,7 +654,7 @@ def main() -> None:
     print("  /teach <label>       teach the previous user utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.9.7 runtime policy")
+    print("  /runtime              show v0.9.8 runtime policy")
     print("  /quit")
     print()
 
@@ -724,7 +734,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.9.7 Semantic-Guided Answer Fine-Tuning Runtime")
+            print("Runtime        : LLM_SEM v0.9.8 Semantic Answer Memory Runtime")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
@@ -1098,24 +1108,51 @@ def main() -> None:
                 generation_intent = fallback_extracted.intent
                 generation_concepts = fallback_extracted.concept_texts
 
-            answer, generation_mode = generate_answer(
-                model,
-                tokenizer,
+            resolution = answer_memory.resolve(
                 text,
-                args,
-                selected_label=last_snapshot.selected_label,
-                gate=gate,
+                label=last_snapshot.selected_label,
                 intent=generation_intent,
                 concepts=generation_concepts,
-                truth_record=truth_record,
+                min_score=args.answer_memory_min_score,
             )
-            print(
-                "GEN> "
-                f"mode={generation_mode} "
-                f"label={last_snapshot.selected_label} "
-                f"intent={generation_intent or 'general'} "
-                f"truth={truth_record.get('truth_status', 'UNKNOWN') if truth_record else 'UNKNOWN'}"
-            )
+
+            if resolution.matched and truth_allows_answer_memory(
+                truth_record,
+                resolution.candidate,
+            ):
+                answer = resolution.answer or ""
+                generation_mode = "semantic-answer-memory"
+                print(
+                    "ANS> "
+                    f"mode={generation_mode} "
+                    f"score={resolution.score:.2f} "
+                    f"reason={resolution.reason}"
+                )
+            else:
+                answer, generation_mode = generate_answer(
+                    model,
+                    tokenizer,
+                    text,
+                    args,
+                    selected_label=last_snapshot.selected_label,
+                    gate=gate,
+                    intent=generation_intent,
+                    concepts=generation_concepts,
+                    truth_record=truth_record,
+                )
+                print(
+                    "GEN> "
+                    f"mode={generation_mode} "
+                    f"label={last_snapshot.selected_label} "
+                    f"intent={generation_intent or 'general'} "
+                    f"truth={truth_record.get('truth_status', 'UNKNOWN') if truth_record else 'UNKNOWN'}"
+                )
+                if resolution.candidate is not None:
+                    print(
+                        "ANS> fallback "
+                        f"score={resolution.score:.2f} "
+                        f"reason={resolution.reason}"
+                    )
             print("AI>", answer)
 
 
