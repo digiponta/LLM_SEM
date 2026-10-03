@@ -177,6 +177,90 @@ class SemanticAnswerMemory:
         self.rows.append(candidate)
         return True
 
+    def upsert_persistent(
+        self,
+        path: str | Path,
+        *,
+        query: str,
+        answer: str,
+        label: str,
+        intent: str | None,
+        concepts: list[str] | None,
+        truth_status: str = "UNVERIFIED",
+        source: str = "chat-fact-merge",
+    ) -> bool:
+        """Replace prior learned answer for the same query/concept and append the new canonical answer."""
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+        qn = normalize_text(query)
+        concept_set = {
+            normalize_text(x)
+            for x in (concepts or [])
+            if str(x).strip()
+        }
+
+        kept: list[dict] = []
+        changed = False
+        if p.exists():
+            for raw in p.read_text(encoding="utf-8").splitlines():
+                if not raw.strip():
+                    continue
+                try:
+                    row = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                row_query = normalize_text(row.get("query", row.get("user", "")))
+                row_concepts = {
+                    normalize_text(x)
+                    for x in row.get("concepts", [])
+                    if str(x).strip()
+                }
+                same_query = row_query == qn
+                same_concept = bool(concept_set and concept_set & row_concepts)
+                if same_query or same_concept:
+                    changed = True
+                    continue
+                kept.append(row)
+
+        payload = {
+            "query": query.strip(),
+            "answer": answer.strip(),
+            "label": (label or "unknown").strip(),
+            "intent": (intent or "general").strip(),
+            "concepts": [str(x).strip() for x in (concepts or []) if str(x).strip()],
+            "truth_status": (truth_status or "UNVERIFIED").strip().upper(),
+            "source": source,
+        }
+        kept.append(payload)
+        p.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in kept),
+            encoding="utf-8",
+        )
+
+        self.rows = [
+            row
+            for row in self.rows
+            if normalize_text(row.query) != qn
+            and not (
+                concept_set
+                and concept_set
+                & {normalize_text(x) for x in row.concepts if str(x).strip()}
+            )
+        ]
+        self.rows.insert(
+            0,
+            AnswerCandidate(
+                query=payload["query"],
+                label=payload["label"],
+                intent=payload["intent"],
+                concepts=payload["concepts"],
+                truth_status=payload["truth_status"],
+                answer=payload["answer"],
+            ),
+        )
+        return True
+
     def resolve(
         self,
         query: str,
