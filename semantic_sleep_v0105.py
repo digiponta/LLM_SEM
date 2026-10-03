@@ -176,7 +176,18 @@ def main() -> None:
     if not source.exists():
         raise FileNotFoundError(source)
     if final_candidate.resolve() == source.resolve():
-        raise ValueError("candidate checkpoint must differ from source model")
+        final_candidate = final_candidate.with_name(
+            f"{final_candidate.stem}.next{final_candidate.suffix}"
+        )
+        print(
+            "SLEEP> candidate matched active source; "
+            "using next candidate:",
+            final_candidate,
+        )
+    if semantic_candidate.resolve() == source.resolve():
+        semantic_candidate = semantic_candidate.with_name(
+            f"{semantic_candidate.stem}.next{semantic_candidate.suffix}"
+        )
 
     pending = active_records(memory)
     target_texts = {str(row["text"]) for row in pending}
@@ -190,7 +201,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.34 Partial Commit One-by-One Sleep")
+    print(" LLM_SEM v0.10.35 Progressive Partial Commit Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -426,7 +437,7 @@ def main() -> None:
                     "--manifest", args.manifest,
                     "--retention-pass",
                     "--note",
-                    "v0.10.34 PARTIAL row-level sleep commit",
+                    "v0.10.35 PROGRESSIVE PARTIAL sleep commit",
                 ]
                 if args.allow_cpu:
                     partial_promote_cmd.append("--allow-cpu")
@@ -860,7 +871,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.34 complete one-by-one sleep",
+        "--note", "v0.10.35 complete progressive one-by-one sleep",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
