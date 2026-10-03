@@ -42,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sleep-max-rounds", type=int, default=5)
     p.add_argument("--sleep-target-mean", type=float, default=0.80)
     p.add_argument("--sleep-target-min", type=float, default=0.60)
+    p.add_argument("--sleep-concept-target-mean", type=float, default=0.75)
+    p.add_argument("--sleep-concept-target-min", type=float, default=0.70)
     p.add_argument("--sleep-min-improvement", type=float, default=0.01)
     p.add_argument("--sleep-max-stall-rounds", type=int, default=2)
     p.add_argument("--sleep-min-termination-rate", type=float, default=1.0)
@@ -182,6 +184,8 @@ def main() -> None:
     print("Max QA rounds      :", args.sleep_max_rounds)
     print("Target mean sim    :", args.sleep_target_mean)
     print("Target min sim     :", args.sleep_target_min)
+    print("Concept mean target:", args.sleep_concept_target_mean)
+    print("Concept min target :", args.sleep_concept_target_min)
     print("Min improvement    :", args.sleep_min_improvement)
     print("Max stall rounds   :", args.sleep_max_stall_rounds)
 
@@ -270,6 +274,7 @@ def main() -> None:
                 "--min-generation-sim", "0.0",
                 "--result-json", str(result_json),
                 "--prefer-final-state",
+                "--concept-balanced",
             ]
             if args.allow_cpu:
                 qa_cmd.append("--allow-cpu")
@@ -300,6 +305,8 @@ def main() -> None:
             termination_rate = float(metrics.get("termination_rate", 0.0))
             abnormal_ratio_max = float(metrics.get("abnormal_ratio_max", 1.0))
             repetition_ratio_max = float(metrics.get("repetition_ratio_max", 1.0))
+            concept_mean = float(metrics.get("concept_generation_mean", mean_sim))
+            concept_min = float(metrics.get("concept_generation_min", min_sim))
             improvement = (
                 mean_sim - previous_mean if previous_mean >= 0.0 else mean_sim
             )
@@ -311,6 +318,7 @@ def main() -> None:
                 f"termination={termination_rate:.3f} "
                 f"abnormal={abnormal_ratio_max:.3f} "
                 f"repetition={repetition_ratio_max:.3f} "
+                f"concept_mean={concept_mean:.6f} concept_min={concept_min:.6f} "
                 f"improvement={improvement:+.6f}"
             )
 
@@ -334,13 +342,16 @@ def main() -> None:
                     target_mean=args.sleep_target_mean,
                     target_min=args.sleep_target_min,
                 )
+                and concept_mean >= args.sleep_concept_target_mean
+                and concept_min >= args.sleep_concept_target_min
                 and quality_ok
             ):
                 completed = True
                 last_round_checkpoint = out
                 print(
                     f"SLEEP> INTERNAL LEARNING COMPLETE at round {round_index}: "
-                    f"mean={mean_sim:.6f}, min={min_sim:.6f}"
+                    f"mean={mean_sim:.6f}, min={min_sim:.6f}, "
+                    f"concept_mean={concept_mean:.6f}, concept_min={concept_min:.6f}"
                 )
                 break
 
@@ -471,7 +482,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.16 multi-knowledge internalization",
+        "--note", "v0.10.17 multi-knowledge balanced sleep",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
