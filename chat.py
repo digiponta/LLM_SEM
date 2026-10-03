@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.14 Answer-Preserving Retention Repair
+# LLM_SEM v0.10.15 Runtime Answer Retention
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -114,8 +114,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--relation-memory", default=DEFAULT_RELATION_MEMORY)
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument("--answer-gate-min-score", type=float, default=12.0)
-    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0114.pt")
-    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0114.pt")
+    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0115.pt")
+    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0115.pt")
     p.add_argument("--sleep-qa-epochs", type=int, default=240)
     p.add_argument("--sleep-epochs", type=int, default=80)
     p.add_argument("--sleep-max-rounds", type=int, default=5)
@@ -708,7 +708,7 @@ def main() -> None:
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.14 runtime policy")
+    print("  /runtime              show v0.10.15 runtime policy")
     print("  /quit")
     print()
 
