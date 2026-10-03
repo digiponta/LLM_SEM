@@ -64,7 +64,7 @@ def main():
 
     failures = 0
     for text in tests:
-        answer = generate_answer(model, tokenizer, text, args)
+        answer, mode = generate_answer(model, tokenizer, text, args)
         ok = bool(answer.strip()) and answer != "(generation produced no visible tokens)"
         print(f"[{'PASS' if ok else 'FAIL'}] {text}")
         print("  AI>", answer)
