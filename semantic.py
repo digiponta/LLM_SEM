@@ -108,6 +108,10 @@ class SemanticProposition:
     vector: SemanticVector
     confidence: Optional[float] = None
     attributes: Dict[str, str] = field(default_factory=dict)
+    truth_status: str = "UNVERIFIED"
+    truth_confidence: Optional[float] = None
+    provenance: Optional[str] = None
+    correction_target: Optional[str] = None
 
 
 @dataclass
@@ -366,6 +370,10 @@ def encode_semantic_v2(
         object_text = str(spec.get("object", ""))
         prop_conf = spec.get("confidence")
         attributes = dict(spec.get("attributes") or {})
+        truth_status = str(spec.get("truth_status", "UNVERIFIED")).upper()
+        truth_confidence = spec.get("truth_confidence")
+        provenance = spec.get("provenance")
+        correction_target = spec.get("correction_target")
         proposition_source = f"{subject} {predicate} {object_text}".strip()
         if not proposition_source:
             continue
@@ -414,6 +422,10 @@ def encode_semantic_v2(
                 ),
                 attributes=attributes,
                 vector=vector,
+                truth_status=truth_status,
+                truth_confidence=(float(truth_confidence) if isinstance(truth_confidence, (int, float)) else None),
+                provenance=(str(provenance) if provenance is not None else None),
+                correction_target=(str(correction_target) if correction_target else None),
             )
         )
 
