@@ -117,6 +117,32 @@ def round_result(final_candidate: Path, round_index: int) -> Path:
     )
 
 
+def internal_learning_complete(
+    mean_similarity: float,
+    min_similarity: float,
+    *,
+    target_mean: float,
+    target_min: float,
+) -> bool:
+    return (
+        mean_similarity >= target_mean
+        and min_similarity >= target_min
+    )
+
+
+def next_stall_count(
+    previous_mean: float,
+    current_mean: float,
+    current_stall: int,
+    *,
+    min_improvement: float,
+) -> int:
+    if previous_mean < 0.0:
+        return 0
+    improvement = current_mean - previous_mean
+    return current_stall + 1 if improvement < min_improvement else 0
+
+
 def main() -> None:
     args = parse_args()
 
@@ -285,9 +311,11 @@ def main() -> None:
                 )
                 return
 
-            if (
-                mean_sim >= args.sleep_target_mean
-                and min_sim >= args.sleep_target_min
+            if internal_learning_complete(
+                mean_sim,
+                min_sim,
+                target_mean=args.sleep_target_mean,
+                target_min=args.sleep_target_min,
             ):
                 completed = True
                 last_round_checkpoint = out
@@ -297,13 +325,12 @@ def main() -> None:
                 )
                 break
 
-            if (
-                previous_mean >= 0.0
-                and improvement < args.sleep_min_improvement
-            ):
-                stall_rounds += 1
-            else:
-                stall_rounds = 0
+            stall_rounds = next_stall_count(
+                previous_mean,
+                mean_sim,
+                stall_rounds,
+                min_improvement=args.sleep_min_improvement,
+            )
 
             if stall_rounds >= args.sleep_max_stall_rounds:
                 print(
