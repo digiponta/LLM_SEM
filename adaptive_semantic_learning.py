@@ -390,4 +390,3 @@ def exact_truth_record(path: Path, text: str) -> dict | None:
         if item["status"] in MEMORY_ACTIVE_STATES:
             return item
     return matches[0]
-\n
