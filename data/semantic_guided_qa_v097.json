@@ -1,0 +1,286 @@
+{
+  "schema_version": "0.9.7",
+  "description": "Small supervised QA set aligned with semantic-guided generation. Answers are intentionally short for the tiny character-level LM.",
+  "samples": [
+    {
+      "query": "CPUとは",
+      "label": "computer",
+      "intent": "definition",
+      "concepts": [
+        "CPU"
+      ],
+      "truth_status": "TRUE",
+      "answer": "CPUは命令を処理する中央処理装置です。"
+    },
+    {
+      "query": "GPUとは",
+      "label": "computer",
+      "intent": "definition",
+      "concepts": [
+        "GPU"
+      ],
+      "truth_status": "TRUE",
+      "answer": "GPUは並列計算を得意とする処理装置です。"
+    },
+    {
+      "query": "メモリとは",
+      "label": "computer",
+      "intent": "definition",
+      "concepts": [
+        "メモリ"
+      ],
+      "truth_status": "TRUE",
+      "answer": "メモリはデータを一時的に保持する装置です。"
+    },
+    {
+      "query": "OSとは",
+      "label": "computer",
+      "intent": "definition",
+      "concepts": [
+        "OS"
+      ],
+      "truth_status": "TRUE",
+      "answer": "OSはコンピュータ資源を管理する基本ソフトです。"
+    },
+    {
+      "query": "暗号とは",
+      "label": "computer",
+      "intent": "definition",
+      "concepts": [
+        "暗号"
+      ],
+      "truth_status": "TRUE",
+      "answer": "暗号は情報を保護するための変換方式です。"
+    },
+    {
+      "query": "AIとは",
+      "label": "computer",
+      "intent": "definition",
+      "concepts": [
+        "AI"
+      ],
+      "truth_status": "TRUE",
+      "answer": "AIは知的処理を計算機で実現する技術です。"
+    },
+    {
+      "query": "宇宙とは",
+      "label": "science",
+      "intent": "definition",
+      "concepts": [
+        "宇宙"
+      ],
+      "truth_status": "TRUE",
+      "answer": "宇宙は物質とエネルギーを含む時空全体です。"
+    },
+    {
+      "query": "量子とは",
+      "label": "science",
+      "intent": "definition",
+      "concepts": [
+        "量子"
+      ],
+      "truth_status": "TRUE",
+      "answer": "量子は物理量の離散的な単位を表す概念です。"
+    },
+    {
+      "query": "原子とは",
+      "label": "science",
+      "intent": "definition",
+      "concepts": [
+        "原子"
+      ],
+      "truth_status": "TRUE",
+      "answer": "原子は元素の性質を保つ基本的な粒子です。"
+    },
+    {
+      "query": "光とは",
+      "label": "science",
+      "intent": "definition",
+      "concepts": [
+        "光"
+      ],
+      "truth_status": "TRUE",
+      "answer": "光は電磁波として伝わるエネルギーです。"
+    },
+    {
+      "query": "重力とは",
+      "label": "science",
+      "intent": "definition",
+      "concepts": [
+        "重力"
+      ],
+      "truth_status": "TRUE",
+      "answer": "重力は質量を持つ物体の間に働く相互作用です。"
+    },
+    {
+      "query": "DNAとは",
+      "label": "science",
+      "intent": "definition",
+      "concepts": [
+        "DNA"
+      ],
+      "truth_status": "TRUE",
+      "answer": "DNAは遺伝情報を保持する核酸です。"
+    },
+    {
+      "query": "犬とは",
+      "label": "animal",
+      "intent": "definition",
+      "concepts": [
+        "犬"
+      ],
+      "truth_status": "TRUE",
+      "answer": "犬は人と暮らしてきた哺乳類の動物です。"
+    },
+    {
+      "query": "猫とは",
+      "label": "animal",
+      "intent": "definition",
+      "concepts": [
+        "猫"
+      ],
+      "truth_status": "TRUE",
+      "answer": "猫は小型の肉食性哺乳類です。"
+    },
+    {
+      "query": "鳥とは",
+      "label": "animal",
+      "intent": "definition",
+      "concepts": [
+        "鳥"
+      ],
+      "truth_status": "TRUE",
+      "answer": "鳥は羽毛を持ち卵を産む脊椎動物です。"
+    },
+    {
+      "query": "魚とは",
+      "label": "animal",
+      "intent": "definition",
+      "concepts": [
+        "魚"
+      ],
+      "truth_status": "TRUE",
+      "answer": "魚は主に水中で生活する脊椎動物です。"
+    },
+    {
+      "query": "雨とは",
+      "label": "weather",
+      "intent": "definition",
+      "concepts": [
+        "雨"
+      ],
+      "truth_status": "TRUE",
+      "answer": "雨は雲から水滴が地上へ落ちる現象です。"
+    },
+    {
+      "query": "雪とは",
+      "label": "weather",
+      "intent": "definition",
+      "concepts": [
+        "雪"
+      ],
+      "truth_status": "TRUE",
+      "answer": "雪は氷の結晶が地上へ降る現象です。"
+    },
+    {
+      "query": "台風とは",
+      "label": "weather",
+      "intent": "definition",
+      "concepts": [
+        "台風"
+      ],
+      "truth_status": "TRUE",
+      "answer": "台風は発達した熱帯低気圧です。"
+    },
+    {
+      "query": "雷とは",
+      "label": "weather",
+      "intent": "definition",
+      "concepts": [
+        "雷"
+      ],
+      "truth_status": "TRUE",
+      "answer": "雷は大気中で起こる大規模な放電現象です。"
+    },
+    {
+      "query": "電車とは",
+      "label": "transport",
+      "intent": "definition",
+      "concepts": [
+        "電車"
+      ],
+      "truth_status": "TRUE",
+      "answer": "電車は電力で走る鉄道車両です。"
+    },
+    {
+      "query": "自動車とは",
+      "label": "transport",
+      "intent": "definition",
+      "concepts": [
+        "自動車"
+      ],
+      "truth_status": "TRUE",
+      "answer": "自動車は道路を走る動力付きの車両です。"
+    },
+    {
+      "query": "飛行機とは",
+      "label": "transport",
+      "intent": "definition",
+      "concepts": [
+        "飛行機"
+      ],
+      "truth_status": "TRUE",
+      "answer": "飛行機は翼で揚力を得て飛行する乗り物です。"
+    },
+    {
+      "query": "船とは",
+      "label": "transport",
+      "intent": "definition",
+      "concepts": [
+        "船"
+      ],
+      "truth_status": "TRUE",
+      "answer": "船は水上を移動するための乗り物です。"
+    },
+    {
+      "query": "パンとは",
+      "label": "food",
+      "intent": "definition",
+      "concepts": [
+        "パン"
+      ],
+      "truth_status": "TRUE",
+      "answer": "パンは穀物の生地を焼いて作る食品です。"
+    },
+    {
+      "query": "米とは",
+      "label": "food",
+      "intent": "definition",
+      "concepts": [
+        "米"
+      ],
+      "truth_status": "TRUE",
+      "answer": "米はイネから得られる主要な穀物です。"
+    },
+    {
+      "query": "りんごとは",
+      "label": "food",
+      "intent": "definition",
+      "concepts": [
+        "りんご"
+      ],
+      "truth_status": "TRUE",
+      "answer": "りんごは甘味や酸味を持つ果物です。"
+    },
+    {
+      "query": "牛乳とは",
+      "label": "food",
+      "intent": "definition",
+      "concepts": [
+        "牛乳"
+      ],
+      "truth_status": "TRUE",
+      "answer": "牛乳は牛から得られる乳を食品にしたものです。"
+    }
+  ]
+}
