@@ -1,6 +1,6 @@
 # one_by_one_sleep_v01030.py
 #
-# LLM_SEM v0.10.32
+# LLM_SEM v0.10.33
 # Learn exactly one new QA row at a time.
 # After each row:
 #   - protect previously known/accepted rows with runtime replay,
@@ -21,7 +21,7 @@ from pathlib import Path
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.32 One-by-One Safe Retry Sleep"
+        description="LLM_SEM v0.10.33 Runtime-Aligned One-by-One Safe Retry Sleep"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -82,7 +82,7 @@ def save_step_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.32",
+                "version": "v0.10.33",
                 "mode": "one-by-one-safe-retry",
                 "samples": rows,
             },
@@ -159,7 +159,7 @@ def main():
     ]
 
     print("=" * 108)
-    print(" LLM_SEM v0.10.32 One-by-One Safe Retry Sleep")
+    print(" LLM_SEM v0.10.33 Runtime-Aligned One-by-One Safe Retry Sleep")
     print("=" * 108)
     print("Source model       :", source)
     print("New training rows  :", len(new_rows))
