@@ -60,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--require-pass", action="store_true")
     p.add_argument("--train-blocks", type=int, default=1)
     p.add_argument("--min-generation-sim", type=float, default=0.0)
+    p.add_argument("--result-json", default="")
     return p.parse_args()
 
 
@@ -443,6 +444,9 @@ def main() -> None:
         train_rows,
         device,
     )
+    generation_min = (
+        min((ratio for _, ratio, _, _ in generation_details), default=1.0)
+    )
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -460,6 +464,7 @@ def main() -> None:
     print("Holdout QA NLL  :", f"{before_test:.6f} -> {after_test:.6f}")
     print("Semantic cosine :", f"{sem_cos:.6f}")
     print("Mandatory generation similarity:", f"{generation_sim:.6f}")
+    print("Mandatory minimum similarity   :", f"{generation_min:.6f}")
     print("Saved checkpoint:", output)
     print("Selected epoch  :", best_epoch if best_state is not None else args.epochs)
     if generation_details:
@@ -482,6 +487,38 @@ def main() -> None:
     else:
         print("RESULT: REVIEW")
         print("Inspect holdout improvement and semantic retention before promotion.")
+
+    if args.result_json:
+        result_path = Path(args.result_json)
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps(
+                {
+                    "source": str(args.model),
+                    "output": str(args.output),
+                    "train_nll_before": before_train,
+                    "train_nll_after": after_train,
+                    "holdout_nll_before": before_test,
+                    "holdout_nll_after": after_test,
+                    "semantic_cosine": sem_cos,
+                    "generation_similarity_mean": generation_sim,
+                    "generation_similarity_min": generation_min,
+                    "generation_details": [
+                        {
+                            "query": query,
+                            "similarity": ratio,
+                            "expected": expected,
+                            "generated": generated,
+                        }
+                        for query, ratio, expected, generated in generation_details
+                    ],
+                    "passed": passed,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ) + "\n",
+            encoding="utf-8",
+        )
 
     if args.require_pass and not passed:
         raise SystemExit(1)
