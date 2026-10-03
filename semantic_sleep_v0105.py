@@ -190,7 +190,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.29 Sleep Training Trace")
+    print(" LLM_SEM v0.10.30 One-by-One Sleep Consolidation")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -338,42 +338,50 @@ def main() -> None:
             )
 
         if incremental_mode and not completed:
-            pareto_candidate = final_candidate.with_name(
-                f"{final_candidate.stem}.pareto{final_candidate.suffix}"
+            one_by_one_candidate = final_candidate.with_name(
+                f"{final_candidate.stem}.onebyone{final_candidate.suffix}"
             )
-            pareto_cmd = [
+            one_by_one_cmd = [
                 sys.executable,
-                "incremental_pareto_sweep_v01026.py",
+                "one_by_one_sleep_v01030.py",
                 "--source", str(current_source),
                 "--incremental-dataset", str(qa_dataset_path),
                 "--full-dataset", args.sleep_dataset,
+                "--precheck", str(precheck_json),
                 "--benchmark", args.benchmark,
                 "--tokenizer", args.tokenizer,
-                "--output", str(pareto_candidate),
-                "--base-learning-rate", str(args.qa_learning_rate),
-                "--base-lm-head-lr", str(args.qa_lm_head_lr),
+                "--output", str(one_by_one_candidate),
+                "--epochs", str(args.qa_epochs),
+                "--learning-rate", str(
+                    args.qa_learning_rate * args.incremental_lr_scale
+                ),
+                "--lm-head-lr", str(
+                    args.qa_lm_head_lr * args.incremental_lr_scale
+                ),
                 "--preserve-weight", str(args.qa_preserve_weight),
+                "--replay-weight", str(args.incremental_distill_weight),
+                "--new-weight", "3.0",
                 "--train-blocks", str(args.incremental_train_blocks),
             ]
             if args.allow_cpu:
-                pareto_cmd.append("--allow-cpu")
+                one_by_one_cmd.append("--allow-cpu")
 
-            pareto_code = run_step_code(
-                pareto_cmd,
-                "incremental Pareto hyperparameter sweep",
+            one_by_one_code = run_step_code(
+                one_by_one_cmd,
+                "one-by-one incremental consolidation",
             )
-            if pareto_code == 0:
+            if one_by_one_code == 0:
                 final_candidate.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(pareto_candidate, final_candidate)
+                shutil.copy2(one_by_one_candidate, final_candidate)
                 completed = True
                 last_round_checkpoint = final_candidate
                 print(
-                    "SLEEP> Pareto sweep found a full-runtime PASS candidate:",
+                    "SLEEP> one-by-one consolidation reached full-runtime PASS:",
                     final_candidate,
                 )
             else:
                 print(
-                    "SLEEP> Pareto sweep found no full-runtime PASS candidate; "
+                    "SLEEP> one-by-one consolidation did not reach full-runtime PASS; "
                     "source model remains active."
                 )
                 return
@@ -781,7 +789,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.29 sleep training trace",
+        "--note", "v0.10.30 one-by-one sleep consolidation",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
