@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.9.9 Answer-Aware Gate Runtime
+# LLM_SEM v0.9.9.1 Gate Reason Consistency Fix
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -623,7 +623,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.9.9 Answer-Aware Gate Runtime")
+    print(" LLM_SEM v0.9.9.1 Gate Reason Consistency Fix")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -657,7 +657,7 @@ def main() -> None:
     print("  /teach <label>       teach the previous user utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.9.9 runtime policy")
+    print("  /runtime              show v0.9.9.1 runtime policy")
     print("  /quit")
     print()
 
@@ -737,7 +737,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.9.9 Answer-Aware Gate Runtime")
+            print("Runtime        : LLM_SEM v0.9.9.1 Gate Reason Consistency Fix")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
@@ -1081,11 +1081,15 @@ def main() -> None:
                 "gate_reason": (
                     "local evidence accepted adaptive override"
                     if gate == "ACCEPT_ADAPTIVE"
-                    else gate_reason(
-                        gate,
-                        last_snapshot.similarity,
-                        float(margin),
-                        thresholds,
+                    else (
+                        answer_gate_decision.reason
+                        if gate == "ACCEPT_ANSWER_MEMORY"
+                        else gate_reason(
+                            gate,
+                            last_snapshot.similarity,
+                            float(margin),
+                            thresholds,
+                        )
                     )
                 ),
             }
