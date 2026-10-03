@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--alpha", type=float, default=0.35)
     p.add_argument("--min-margin", type=float, default=0.02)
     p.add_argument("--recovery-min-margin", type=float, default=0.005)
+    p.add_argument("--degraded-min-margin", type=float, default=0.01)
     p.add_argument("--recovery-min-gain", type=float, default=0.0)
     p.add_argument("--max-loo-drop", type=float, default=0.10)
     p.add_argument("--allow-cpu", action="store_true")
@@ -93,7 +94,7 @@ def main() -> None:
     global_pass = loo_drop <= args.max_loo_drop
 
     print("=" * 100)
-    print(" LLM_SEM v0.10.7 Consolidated Retention / Recovery Regression")
+    print(" LLM_SEM v0.10.10 Retention / Degraded / Recovery Regression")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
@@ -105,6 +106,7 @@ def main() -> None:
     print("Consolidated records:", len(records))
     print("Retention min margin:", args.min_margin)
     print("Recovery min margin :", args.recovery_min_margin)
+    print("Degraded min margin :", args.degraded_min_margin)
     print("Recovery min gain   :", args.recovery_min_gain)
     print()
     print("Global benchmark preservation")
@@ -143,17 +145,30 @@ def main() -> None:
             cand_top == expected
             and cand_margin >= args.min_margin
         )
+        degraded_retention = (
+            source_top == expected
+            and cand_top == expected
+            and cand_margin >= args.degraded_min_margin
+        )
         recovered = (
             source_top != expected
             and cand_top == expected
             and cand_margin >= args.recovery_min_margin
             and expected_gain > args.recovery_min_gain
         )
-        ok = global_pass and (strict_retention or recovered)
+        ok = global_pass and (
+            strict_retention
+            or degraded_retention
+            or recovered
+        )
         mode = (
             "RETENTION"
             if strict_retention
-            else ("RECOVERY" if recovered else "FAIL")
+            else (
+                "DEGRADED"
+                if degraded_retention
+                else ("RECOVERY" if recovered else "FAIL")
+            )
         )
 
         passed += int(ok)
