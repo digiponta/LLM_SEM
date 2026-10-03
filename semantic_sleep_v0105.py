@@ -190,7 +190,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.26 Pareto Incremental Sleep")
+    print(" LLM_SEM v0.10.27 Runtime-Replay Incremental Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -781,7 +781,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.26 Pareto incremental sleep",
+        "--note", "v0.10.27 runtime-replay incremental sleep",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
