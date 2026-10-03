@@ -64,6 +64,16 @@ def run_step(command: list[str], name: str) -> None:
         raise RuntimeError(f"{name} failed with exit code {result.returncode}")
 
 
+def run_step_code(command: list[str], name: str) -> int:
+    print()
+    print("=" * 96)
+    print(" SLEEP STEP:", name)
+    print("=" * 96)
+    print(">", " ".join(command))
+    result = subprocess.run(command, check=False)
+    return int(result.returncode)
+
+
 def active_records(memory: Path) -> list[dict]:
     return [
         row
@@ -246,132 +256,178 @@ def main() -> None:
         last_metrics: dict = {}
         last_round_checkpoint: Path | None = None
 
-        for round_index in range(1, max(1, args.sleep_max_rounds) + 1):
-            out = round_checkpoint(final_candidate, round_index)
-            result_json = round_result(final_candidate, round_index)
+        precheck_json = final_candidate.with_name(
+            f"{final_candidate.stem}.precheck.json"
+        )
+        precheck_cmd = [
+            sys.executable,
+            "retention_first_sleep_check_v01022.py",
+            "--model", str(current_source),
+            "--dataset", args.sleep_dataset,
+            "--benchmark", args.benchmark,
+            "--tokenizer", args.tokenizer,
+            "--result-json", str(precheck_json),
+        ]
+        if args.allow_cpu:
+            precheck_cmd.append("--allow-cpu")
 
-            print()
-            print("=" * 96)
+        precheck_code = run_step_code(
+            precheck_cmd,
+            "retention-first internalization precheck",
+        )
+
+        if precheck_code == 0:
+            final_candidate.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(current_source, final_candidate)
+            completed = True
+            last_round_checkpoint = final_candidate
             print(
-                f" SLEEP QA ROUND {round_index}/{args.sleep_max_rounds} "
-                f"source={current_source.name}"
+                "SLEEP> RETENTION-FIRST PASS: all mandatory concepts "
+                "already internalized; Balanced QA sleep SKIPPED."
             )
-            print("=" * 96)
+            print("SLEEP> preserved source candidate:", final_candidate)
+        elif precheck_code == 2:
+            print(
+                "SLEEP> retention-first precheck SKIP: insufficient concepts; "
+                "continue with Balanced QA sleep."
+            )
+        elif precheck_code == 1:
+            print(
+                "SLEEP> retention-first precheck FAIL: at least one concept "
+                "needs learning; continue with Balanced QA sleep."
+            )
+        else:
+            raise RuntimeError(
+                f"retention-first precheck failed with exit code {precheck_code}"
+            )
 
-            qa_cmd = [
-                sys.executable,
-                "semantic_guided_answer_finetune_v097.py",
-                "--model", str(current_source),
-                "--tokenizer", args.tokenizer,
-                "--dataset", args.sleep_dataset,
-                "--benchmark", args.benchmark,
-                "--output", str(out),
-                "--epochs", str(args.qa_epochs),
-                "--learning-rate", str(args.qa_learning_rate),
-                "--lm-head-lr", str(args.qa_lm_head_lr),
-                "--preserve-weight", str(args.qa_preserve_weight),
-                "--train-blocks", str(args.qa_train_blocks),
-                "--min-generation-sim", "0.0",
-                "--result-json", str(result_json),
-                "--prefer-final-state",
-                "--concept-balanced",
-            ]
-            if args.allow_cpu:
-                qa_cmd.append("--allow-cpu")
+        if not completed:
+            for round_index in range(1, max(1, args.sleep_max_rounds) + 1):
+                out = round_checkpoint(final_candidate, round_index)
+                result_json = round_result(final_candidate, round_index)
 
-            try:
-                run_step(
-                    qa_cmd,
-                    f"iterative Answer/Relation internal training round {round_index}",
+                print()
+                print("=" * 96)
+                print(
+                    f" SLEEP QA ROUND {round_index}/{args.sleep_max_rounds} "
+                    f"source={current_source.name}"
                 )
-            except Exception:
-                if pending:
-                    restore_targets_to_active(
-                        memory,
-                        target_texts,
-                        model_version=source.name,
+                print("=" * 96)
+
+                qa_cmd = [
+                    sys.executable,
+                    "semantic_guided_answer_finetune_v097.py",
+                    "--model", str(current_source),
+                    "--tokenizer", args.tokenizer,
+                    "--dataset", args.sleep_dataset,
+                    "--benchmark", args.benchmark,
+                    "--output", str(out),
+                    "--epochs", str(args.qa_epochs),
+                    "--learning-rate", str(args.qa_learning_rate),
+                    "--lm-head-lr", str(args.qa_lm_head_lr),
+                    "--preserve-weight", str(args.qa_preserve_weight),
+                    "--train-blocks", str(args.qa_train_blocks),
+                    "--min-generation-sim", "0.0",
+                    "--result-json", str(result_json),
+                    "--prefer-final-state",
+                    "--concept-balanced",
+                ]
+                if args.allow_cpu:
+                    qa_cmd.append("--allow-cpu")
+
+                try:
+                    run_step(
+                        qa_cmd,
+                        f"iterative Answer/Relation internal training round {round_index}",
                     )
-                raise
+                except Exception:
+                    if pending:
+                        restore_targets_to_active(
+                            memory,
+                            target_texts,
+                            model_version=source.name,
+                        )
+                    raise
 
-            if not result_json.exists():
-                raise RuntimeError(
-                    f"Sleep round did not create metrics: {result_json}"
+                if not result_json.exists():
+                    raise RuntimeError(
+                        f"Sleep round did not create metrics: {result_json}"
+                    )
+                metrics = json.loads(result_json.read_text(encoding="utf-8"))
+                last_metrics = metrics
+                mean_sim = float(metrics.get("generation_similarity_mean", 0.0))
+                min_sim = float(metrics.get("generation_similarity_min", 0.0))
+                sem_cos = float(metrics.get("semantic_cosine", 0.0))
+                termination_rate = float(metrics.get("termination_rate", 0.0))
+                abnormal_ratio_max = float(metrics.get("abnormal_ratio_max", 1.0))
+                repetition_ratio_max = float(metrics.get("repetition_ratio_max", 1.0))
+                concept_mean = float(metrics.get("concept_generation_mean", mean_sim))
+                concept_min = float(metrics.get("concept_generation_min", min_sim))
+                improvement = (
+                    mean_sim - previous_mean if previous_mean >= 0.0 else mean_sim
                 )
-            metrics = json.loads(result_json.read_text(encoding="utf-8"))
-            last_metrics = metrics
-            mean_sim = float(metrics.get("generation_similarity_mean", 0.0))
-            min_sim = float(metrics.get("generation_similarity_min", 0.0))
-            sem_cos = float(metrics.get("semantic_cosine", 0.0))
-            termination_rate = float(metrics.get("termination_rate", 0.0))
-            abnormal_ratio_max = float(metrics.get("abnormal_ratio_max", 1.0))
-            repetition_ratio_max = float(metrics.get("repetition_ratio_max", 1.0))
-            concept_mean = float(metrics.get("concept_generation_mean", mean_sim))
-            concept_min = float(metrics.get("concept_generation_min", min_sim))
-            improvement = (
-                mean_sim - previous_mean if previous_mean >= 0.0 else mean_sim
-            )
 
-            print(
-                "SLEEP> round result: "
-                f"mean={mean_sim:.6f} min={min_sim:.6f} "
-                f"semantic_cosine={sem_cos:.6f} "
-                f"termination={termination_rate:.3f} "
-                f"abnormal={abnormal_ratio_max:.3f} "
-                f"repetition={repetition_ratio_max:.3f} "
-                f"concept_mean={concept_mean:.6f} concept_min={concept_min:.6f} "
-                f"improvement={improvement:+.6f}"
-            )
-
-            if sem_cos < 0.98:
                 print(
-                    "SLEEP> STOP: semantic preservation fell below 0.98. "
-                    "Candidate will not be promoted."
+                    "SLEEP> round result: "
+                    f"mean={mean_sim:.6f} min={min_sim:.6f} "
+                    f"semantic_cosine={sem_cos:.6f} "
+                    f"termination={termination_rate:.3f} "
+                    f"abnormal={abnormal_ratio_max:.3f} "
+                    f"repetition={repetition_ratio_max:.3f} "
+                    f"concept_mean={concept_mean:.6f} concept_min={concept_min:.6f} "
+                    f"improvement={improvement:+.6f}"
                 )
-                return
 
-            quality_ok = (
-                termination_rate >= args.sleep_min_termination_rate
-                and abnormal_ratio_max <= args.sleep_max_abnormal_ratio
-                and repetition_ratio_max <= args.sleep_max_repetition_ratio
-            )
+                if sem_cos < 0.98:
+                    print(
+                        "SLEEP> STOP: semantic preservation fell below 0.98. "
+                        "Candidate will not be promoted."
+                    )
+                    return
 
-            if (
-                internal_learning_complete(
+                quality_ok = (
+                    termination_rate >= args.sleep_min_termination_rate
+                    and abnormal_ratio_max <= args.sleep_max_abnormal_ratio
+                    and repetition_ratio_max <= args.sleep_max_repetition_ratio
+                )
+
+                if (
+                    internal_learning_complete(
+                        mean_sim,
+                        min_sim,
+                        target_mean=args.sleep_target_mean,
+                        target_min=args.sleep_target_min,
+                    )
+                    and concept_mean >= args.sleep_concept_target_mean
+                    and concept_min >= args.sleep_concept_target_min
+                    and quality_ok
+                ):
+                    completed = True
+                    last_round_checkpoint = out
+                    print(
+                        f"SLEEP> INTERNAL LEARNING COMPLETE at round {round_index}: "
+                        f"mean={mean_sim:.6f}, min={min_sim:.6f}, "
+                        f"concept_mean={concept_mean:.6f}, concept_min={concept_min:.6f}"
+                    )
+                    break
+
+                stall_rounds = next_stall_count(
+                    previous_mean,
                     mean_sim,
-                    min_sim,
-                    target_mean=args.sleep_target_mean,
-                    target_min=args.sleep_target_min,
+                    stall_rounds,
+                    min_improvement=args.sleep_min_improvement,
                 )
-                and concept_mean >= args.sleep_concept_target_mean
-                and concept_min >= args.sleep_concept_target_min
-                and quality_ok
-            ):
-                completed = True
+
+                if stall_rounds >= args.sleep_max_stall_rounds:
+                    print(
+                        "SLEEP> STOP: generation similarity improvement stalled "
+                        f"for {stall_rounds} rounds."
+                    )
+                    return
+
+                previous_mean = mean_sim
+                current_source = out
                 last_round_checkpoint = out
-                print(
-                    f"SLEEP> INTERNAL LEARNING COMPLETE at round {round_index}: "
-                    f"mean={mean_sim:.6f}, min={min_sim:.6f}, "
-                    f"concept_mean={concept_mean:.6f}, concept_min={concept_min:.6f}"
-                )
-                break
-
-            stall_rounds = next_stall_count(
-                previous_mean,
-                mean_sim,
-                stall_rounds,
-                min_improvement=args.sleep_min_improvement,
-            )
-
-            if stall_rounds >= args.sleep_max_stall_rounds:
-                print(
-                    "SLEEP> STOP: generation similarity improvement stalled "
-                    f"for {stall_rounds} rounds."
-                )
-                return
-
-            previous_mean = mean_sim
-            current_source = out
-            last_round_checkpoint = out
 
         if not completed:
             print(
@@ -388,7 +444,8 @@ def main() -> None:
 
         assert last_round_checkpoint is not None
         final_candidate.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(last_round_checkpoint, final_candidate)
+        if last_round_checkpoint.resolve() != final_candidate.resolve():
+            shutil.copy2(last_round_checkpoint, final_candidate)
         print("SLEEP> selected completed checkpoint:", last_round_checkpoint)
         print("SLEEP> copied final candidate       :", final_candidate)
     else:
@@ -501,7 +558,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.21 runtime-path selective surface repair",
+        "--note", "v0.10.22 retention-first no-op sleep",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
