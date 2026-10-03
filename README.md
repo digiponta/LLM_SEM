@@ -4105,3 +4105,80 @@ This completion criterion applies to semantic meaning/topic consolidation.
 Truth metadata remains a separate axis by design so incorrect, contested,
 outdated, or unverified knowledge can still be represented explicitly and
 audited while semantic content is internalized.
+
+
+## v0.9.5 Answer Generation Restored
+
+v0.9.5 reconnects natural-language generation to the unified Semantic/Truth
+runtime.
+
+The runtime flow is now:
+
+```text
+User input
+   |
+   v
+Semantic Router / Local Evidence
+   |
+   v
+Truth-Aware metadata
+   |
+   v
+Semantic Data v2 diagnostics
+   |
+   v
+Gate result
+   |
+   v
+LLM generation
+   |
+   v
+AI> natural-language answer
+```
+
+The important behavioral change is that answer generation is no longer blocked
+by the semantic gate. UNKNOWN_KNOWLEDGE and GATE_REVIEW remain visible as
+diagnostics, but the model still produces an `AI>` continuation.
+
+New runtime options:
+
+```text
+--answer / --no-answer
+--max-new-tokens 80
+--temperature 0.8
+--top-k 40
+```
+
+Example:
+
+```powershell
+python chat.py
+```
+
+Expected shape:
+
+```text
+You> CPUとは
+SEM> ACCEPT ...
+V2> ...
+SEM> Routed to semantic class: computer
+AI> ...
+```
+
+Smoke regression:
+
+```powershell
+python run_answer_generation_regression_v095.py
+```
+
+The regression checks that visible continuations are produced for:
+
+```text
+CPUとは
+宇宙とは
+暗号
+```
+
+This smoke test validates the generation path only. It does not claim that the
+small base model's generated answer is factually correct or fluent; semantic
+routing and Truth-Aware metadata remain separate diagnostics.
