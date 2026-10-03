@@ -56,6 +56,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--holdout", type=float, default=0.20)
     p.add_argument("--allow-cpu", action="store_true")
+    p.add_argument("--require-pass", action="store_true")
     return p.parse_args()
 
 
@@ -370,12 +371,16 @@ def main() -> None:
     print("Saved checkpoint:", output)
     print("Selected epoch  :", best_epoch if best_state is not None else args.epochs)
     print()
-    if after_test < before_test and sem_cos >= 0.98:
+    passed = after_test < before_test and sem_cos >= 0.98
+    if passed:
         print("RESULT: PASS")
         print("Answer supervision improved holdout NLL while preserving semantic geometry.")
     else:
         print("RESULT: REVIEW")
         print("Inspect holdout improvement and semantic retention before promotion.")
+
+    if args.require_pass and not passed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
