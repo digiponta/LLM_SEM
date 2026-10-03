@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
+import json
 
 import torch
 
@@ -54,6 +55,7 @@ from tokenizer import Tokenizer
 
 
 DEFAULT_MODEL = "model/model-gpu-v0.4.pt"
+DEFAULT_ACTIVE_MODEL_MANIFEST = "model/active-model.json"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_BENCHMARK = "my_benchmark.csv"
 DEFAULT_UNKNOWN_BENCHMARK = "unknown_benchmark.csv"
@@ -83,7 +85,8 @@ def parse_args() -> argparse.Namespace:
             "local-evidence routing."
         )
     )
-    p.add_argument("--model", default=DEFAULT_MODEL)
+    p.add_argument("--model", default=None, help="Explicit checkpoint override. If omitted, use model/active-model.json when available.")
+    p.add_argument("--active-model-manifest", default=DEFAULT_ACTIVE_MODEL_MANIFEST)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     p.add_argument("--benchmark", default=DEFAULT_BENCHMARK)
     p.add_argument("--unknown-benchmark", default=DEFAULT_UNKNOWN_BENCHMARK)
@@ -444,8 +447,33 @@ def print_teaching_effect(
     print("TCH> --------------------------------------------------------")
 
 
+def resolve_runtime_model(args: argparse.Namespace) -> str:
+    if args.model:
+        return args.model
+
+    manifest_path = Path(args.active_model_manifest)
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            active = str(manifest.get("active_model", "")).strip()
+            if active and Path(active).exists():
+                return active
+            if active:
+                print(
+                    "WARN> active-model manifest points to missing checkpoint: "
+                    f"{active}; falling back to {DEFAULT_MODEL}"
+                )
+        except (json.JSONDecodeError, OSError) as exc:
+            print(
+                "WARN> failed to read active-model manifest "
+                f"{manifest_path}: {exc}; falling back to {DEFAULT_MODEL}"
+            )
+    return DEFAULT_MODEL
+
+
 def main() -> None:
     args = parse_args()
+    args.model = resolve_runtime_model(args)
 
     for filename, label in (
         (args.model, "Model checkpoint"),
@@ -498,11 +526,12 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.9.0 Truth-Aware Unified Semantic Runtime")
+    print(" LLM_SEM v0.9.4 Truth-Aware Consolidated Runtime")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
         print("GPU             :", torch.cuda.get_device_name(0))
+    print("Model           :", args.model)
     print("Checkpoint loss :", checkpoint.get("loss"))
     print("Policy          :", args.policy)
     print("Base samples    :", len(base_samples))
@@ -606,7 +635,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.9.0 Truth-Aware Unified Semantic Runtime")
+            print("Runtime        : LLM_SEM v0.9.4 Truth-Aware Consolidated Runtime")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
