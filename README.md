@@ -4623,3 +4623,29 @@ New option:
 
 This keeps semantic routing, answer selection, and gate state consistent without
 globally lowering the legacy similarity threshold.
+
+
+## v0.9.9.1 Gate Reason Consistency Fix
+
+v0.9.9 correctly promoted strong Semantic Answer Memory matches to
+`ACCEPT_ANSWER_MEMORY`, but Semantic Data v2 still rendered the generic
+threshold-based gate reason.
+
+Example of the incorrect display:
+
+```text
+gate_state=ACCEPT_ANSWER_MEMORY
+gate_reason=similarity 0.727571 >= 0.820103 ...
+```
+
+v0.9.9.1 keeps the gate behavior unchanged and fixes only the explanation path.
+
+For Answer Memory promotion, Semantic Data v2 now reports the actual reason:
+
+```text
+gate_state=ACCEPT_ANSWER_MEMORY
+gate_reason=answer-memory score=23.00 reason=query-exact,label,intent,concept,concept-in-query
+```
+
+This makes the runtime decision, displayed gate state, and displayed reason
+consistent.
