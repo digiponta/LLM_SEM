@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.9.8 Semantic Answer Memory Runtime
+# LLM_SEM v0.9.9 Answer-Aware Gate Runtime
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -52,6 +52,7 @@ from semantic_proposition_v036 import (
     refine_purpose,
 )
 from tokenizer import Tokenizer
+from answer_aware_gate_v099 import apply_answer_aware_gate
 from semantic_answer_memory_v098 import (
     DEFAULT_ANSWER_MEMORY,
     SemanticAnswerMemory,
@@ -98,6 +99,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--memory", default=DEFAULT_MEMORY)
     p.add_argument("--answer-memory", default=DEFAULT_ANSWER_MEMORY)
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
+    p.add_argument("--answer-gate-min-score", type=float, default=12.0)
     p.add_argument(
         "--policy",
         default=DEFAULT_POLICY,
@@ -621,7 +623,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.9.8 Semantic Answer Memory Runtime")
+    print(" LLM_SEM v0.9.9 Answer-Aware Gate Runtime")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -647,6 +649,7 @@ def main() -> None:
     print("Max new tokens   :", args.max_new_tokens)
     print("Answer memory    :", args.answer_memory)
     print("Answer entries   :", len(answer_memory.rows))
+    print("Answer gate min  :", args.answer_gate_min_score)
     print()
     print("Commands:")
     print("  /learn on|off|status")
@@ -654,7 +657,7 @@ def main() -> None:
     print("  /teach <label>       teach the previous user utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.9.8 runtime policy")
+    print("  /runtime              show v0.9.9 runtime policy")
     print("  /quit")
     print()
 
@@ -734,7 +737,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.9.8 Semantic Answer Memory Runtime")
+            print("Runtime        : LLM_SEM v0.9.9 Answer-Aware Gate Runtime")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
@@ -956,8 +959,45 @@ def main() -> None:
         )
         print_local_runtime(local_decision)
 
+        if semantic_v2_enabled:
+            pre_extracted = extract_purpose_intent(text)
+            pre_generation_intent = pre_extracted.intent
+            pre_generation_concepts = proposition_concepts(
+                pre_extracted.concept_texts,
+                extract_propositions(
+                    pre_extracted.concept_texts[0]
+                    if pre_extracted.concept_texts
+                    else text
+                ),
+            )
+        else:
+            pre_extracted = extract_purpose_intent(text)
+            pre_generation_intent = pre_extracted.intent
+            pre_generation_concepts = pre_extracted.concept_texts
+
+        pre_resolution = answer_memory.resolve(
+            text,
+            label=last_snapshot.selected_label,
+            intent=pre_generation_intent,
+            concepts=pre_generation_concepts,
+            min_score=args.answer_memory_min_score,
+        )
         truth_record = exact_truth_record(memory_path, text)
         notice = truth_notice(truth_record)
+
+        answer_gate_decision = apply_answer_aware_gate(
+            gate,
+            resolution=pre_resolution,
+            truth_record=truth_record,
+            min_promote_score=args.answer_gate_min_score,
+        )
+        if answer_gate_decision.promoted:
+            gate = answer_gate_decision.gate
+            last_snapshot.gate = gate
+            print(
+                "GATE> promoted to ACCEPT_ANSWER_MEMORY "
+                f"({answer_gate_decision.reason})"
+            )
         if truth_record is not None:
             print(
                 "TRUTH> "
@@ -1089,6 +1129,11 @@ def main() -> None:
                 "SEM> Accepted by local-evidence adaptive override: "
                 f"{last_snapshot.selected_label}"
             )
+        elif gate == "ACCEPT_ANSWER_MEMORY":
+            print(
+                "SEM> Accepted by high-confidence Semantic Answer Memory: "
+                f"{last_snapshot.selected_label}"
+            )
         elif gate == "UNKNOWN_KNOWLEDGE":
             print("SEM> Unknown semantic region. Teach with: /teach <label>")
         elif gate == "GATE_REVIEW":
@@ -1108,13 +1153,7 @@ def main() -> None:
                 generation_intent = fallback_extracted.intent
                 generation_concepts = fallback_extracted.concept_texts
 
-            resolution = answer_memory.resolve(
-                text,
-                label=last_snapshot.selected_label,
-                intent=generation_intent,
-                concepts=generation_concepts,
-                min_score=args.answer_memory_min_score,
-            )
+            resolution = pre_resolution
 
             if resolution.matched and truth_allows_answer_memory(
                 truth_record,
