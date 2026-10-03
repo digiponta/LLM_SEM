@@ -3962,3 +3962,146 @@ Truth state
 
 Explicit provenance remains authoritative and auditable. The learned head is a
 relation-aware classifier, not an autonomous source of objective truth.
+
+
+## v0.9.4 Consolidation Completion and Active-Model Promotion
+
+v0.9.4 closes the remaining operational gap in Semantic Memory consolidation.
+
+The semantic migration pipeline is now:
+
+```text
+Semantic Memory
+   |
+   v
+TRAINING
+   |
+   v
+Semantic-preserving consolidation
+   |
+   v
+VALIDATING
+   |
+   v
+CONSOLIDATED
+   |
+   v
+Retention / interference regression
+   |
+   +-- FAIL -> do not promote
+   |
+   +-- PASS
+          |
+          v
+Active-model promotion
+          |
+          v
+model/active-model.json
+          |
+          v
+chat.py automatically loads promoted checkpoint
+```
+
+Truth-Aware metadata from v0.9.x continues independently:
+
+```text
+semantic meaning -> can be consolidated into Transformer parameters
+
+truth_status / provenance / correction
+    -> remains explicit/auditable metadata
+    -> may additionally be modeled by truth/evidence heads
+```
+
+### 1. Verify all consolidated memories
+
+Run:
+
+```powershell
+python consolidated_retention_v094.py \
+  --source model/model-sem-consolidation-v080.pt \
+  --candidate model/model-sem-consolidation-v081.pt
+```
+
+The test is intentionally read-only. It checks every record whose lifecycle is:
+
+```text
+CONSOLIDATED
+```
+
+PASS requires:
+
+```text
+candidate top semantic class == stored label
+candidate margin >= 0.02
+benchmark LOO regression <= 10 percentage points
+all consolidated records retained
+```
+
+The script exits with code 0 only on complete PASS.
+
+### 2. Promote only after retention PASS
+
+After the previous command reports:
+
+```text
+RESULT : PASS
+```
+
+run:
+
+```powershell
+python promote_active_model_v094.py \
+  --candidate model/model-sem-consolidation-v081.pt \
+  --retention-pass
+```
+
+This writes atomically:
+
+```text
+model/active-model.json
+```
+
+Example manifest:
+
+```json
+{
+  "schema_version": "0.9.4",
+  "active_model": "model/model-sem-consolidation-v081.pt",
+  "promotion_reason": "consolidated_retention_pass"
+}
+```
+
+### 3. Runtime uses the promoted model automatically
+
+`chat.py` now resolves the model in this order:
+
+```text
+1. explicit --model argument
+2. model/active-model.json
+3. legacy fallback model/model-gpu-v0.4.pt
+```
+
+Therefore, after successful promotion:
+
+```powershell
+python chat.py
+```
+
+uses the validated consolidated checkpoint without requiring an explicit
+`--model` argument.
+
+### Completion criterion
+
+The semantic-memory migration task can be considered operationally complete when:
+
+```text
+1. all intended records are CONSOLIDATED
+2. consolidated_retention_v094.py reports PASS
+3. promote_active_model_v094.py writes active-model.json
+4. chat.py starts with the promoted checkpoint
+```
+
+This completion criterion applies to semantic meaning/topic consolidation.
+Truth metadata remains a separate axis by design so incorrect, contested,
+outdated, or unverified knowledge can still be represented explicitly and
+audited while semantic content is internalized.
