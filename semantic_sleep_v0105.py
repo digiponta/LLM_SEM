@@ -190,7 +190,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.25 Runtime-Constrained Incremental Sleep")
+    print(" LLM_SEM v0.10.26 Pareto Incremental Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -336,6 +336,47 @@ def main() -> None:
             raise RuntimeError(
                 f"retention-first precheck failed with exit code {precheck_code}"
             )
+
+        if incremental_mode and not completed:
+            pareto_candidate = final_candidate.with_name(
+                f"{final_candidate.stem}.pareto{final_candidate.suffix}"
+            )
+            pareto_cmd = [
+                sys.executable,
+                "incremental_pareto_sweep_v01026.py",
+                "--source", str(current_source),
+                "--incremental-dataset", str(qa_dataset_path),
+                "--full-dataset", args.sleep_dataset,
+                "--benchmark", args.benchmark,
+                "--tokenizer", args.tokenizer,
+                "--output", str(pareto_candidate),
+                "--base-learning-rate", str(args.qa_learning_rate),
+                "--base-lm-head-lr", str(args.qa_lm_head_lr),
+                "--preserve-weight", str(args.qa_preserve_weight),
+                "--train-blocks", str(args.incremental_train_blocks),
+            ]
+            if args.allow_cpu:
+                pareto_cmd.append("--allow-cpu")
+
+            pareto_code = run_step_code(
+                pareto_cmd,
+                "incremental Pareto hyperparameter sweep",
+            )
+            if pareto_code == 0:
+                final_candidate.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(pareto_candidate, final_candidate)
+                completed = True
+                last_round_checkpoint = final_candidate
+                print(
+                    "SLEEP> Pareto sweep found a full-runtime PASS candidate:",
+                    final_candidate,
+                )
+            else:
+                print(
+                    "SLEEP> Pareto sweep found no full-runtime PASS candidate; "
+                    "source model remains active."
+                )
+                return
 
         if not completed:
             for round_index in range(1, max(1, args.sleep_max_rounds) + 1):
@@ -740,7 +781,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.25 runtime-constrained incremental sleep",
+        "--note", "v0.10.26 Pareto incremental sleep",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
