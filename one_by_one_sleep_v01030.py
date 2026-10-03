@@ -794,7 +794,7 @@ def main():
     state_json.write_text(
         json.dumps(
             {
-                "version": "v0.10.35",
+                "version": "v0.10.37",
                 "state": state,
                 "source": str(source),
                 "output": str(output),
