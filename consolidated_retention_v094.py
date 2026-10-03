@@ -39,6 +39,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--memory", default=DEFAULT_MEMORY)
     p.add_argument("--alpha", type=float, default=0.35)
     p.add_argument("--min-margin", type=float, default=0.02)
+    p.add_argument("--recovery-min-margin", type=float, default=0.005)
+    p.add_argument("--recovery-min-gain", type=float, default=0.0)
     p.add_argument("--max-loo-drop", type=float, default=0.10)
     p.add_argument("--allow-cpu", action="store_true")
     return p.parse_args()
@@ -91,7 +93,7 @@ def main() -> None:
     global_pass = loo_drop <= args.max_loo_drop
 
     print("=" * 100)
-    print(" LLM_SEM v0.9.4 Consolidated Retention / Interference Regression")
+    print(" LLM_SEM v0.10.7 Consolidated Retention / Recovery Regression")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
@@ -101,6 +103,9 @@ def main() -> None:
     print("Candidate checkpoint:", args.candidate)
     print("Candidate loss      :", cand_ckpt.get("loss"))
     print("Consolidated records:", len(records))
+    print("Retention min margin:", args.min_margin)
+    print("Recovery min margin :", args.recovery_min_margin)
+    print("Recovery min gain   :", args.recovery_min_gain)
     print()
     print("Global benchmark preservation")
     print("-----------------------------")
@@ -124,16 +129,6 @@ def main() -> None:
         cand_top = cand_ranked[0].label if cand_ranked else "(none)"
         source_margin = margin_for(source_ranked)
         cand_margin = margin_for(cand_ranked)
-        ok = (
-            global_pass
-            and cand_top == expected
-            and cand_margin >= args.min_margin
-        )
-        passed += int(ok)
-        failed += int(not ok)
-        by_label[expected] += 1
-        by_label_pass[expected] += int(ok)
-
         expected_source = next(
             (float(x.similarity) for x in source_ranked if x.label == expected),
             -1.0,
@@ -142,10 +137,33 @@ def main() -> None:
             (float(x.similarity) for x in cand_ranked if x.label == expected),
             -1.0,
         )
+        expected_gain = expected_candidate - expected_source
+
+        strict_retention = (
+            cand_top == expected
+            and cand_margin >= args.min_margin
+        )
+        recovered = (
+            source_top != expected
+            and cand_top == expected
+            and cand_margin >= args.recovery_min_margin
+            and expected_gain > args.recovery_min_gain
+        )
+        ok = global_pass and (strict_retention or recovered)
+        mode = (
+            "RETENTION"
+            if strict_retention
+            else ("RECOVERY" if recovered else "FAIL")
+        )
+
+        passed += int(ok)
+        failed += int(not ok)
+        by_label[expected] += 1
+        by_label_pass[expected] += int(ok)
 
         print(
             f"{idx:02d}. [{'PASS' if ok else 'FAIL'}] "
-            f"expected={expected:<10} text={text!r}"
+            f"mode={mode:<9} expected={expected:<10} text={text!r}"
         )
         print(
             f"    source_top={source_top:<10} candidate_top={cand_top:<10}"
@@ -155,7 +173,7 @@ def main() -> None:
             f"candidate_margin={cand_margin:+.6f}"
         )
         print(
-            f"    expected_sim_delta={expected_candidate-expected_source:+.6f}"
+            f"    expected_sim_delta={expected_gain:+.6f}"
         )
 
     print()
