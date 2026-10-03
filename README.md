@@ -4530,3 +4530,96 @@ New runtime options:
 v0.9.8 does not remove the language-model generator. It changes its role to a
 fallback path for queries that do not have a sufficiently strong Semantic
 Answer Memory match.
+
+
+## v0.9.9 Answer-Aware Gate
+
+v0.9.8 showed that Semantic Answer Memory can answer some queries reliably even
+when the legacy Known/Unknown gate still reports UNKNOWN_KNOWLEDGE.
+
+v0.9.9 makes the gate aware of that answer capability.
+
+New gate:
+
+```text
+ACCEPT_ANSWER_MEMORY
+```
+
+Promotion rule:
+
+```text
+base gate = UNKNOWN_KNOWLEDGE or GATE_REVIEW
+        +
+Semantic Answer Memory match exists
+        +
+Answer score >= 12.0
+        +
+truth state does not block the answer
+        |
+        v
+ACCEPT_ANSWER_MEMORY
+```
+
+Example:
+
+```text
+宇宙とは
+
+legacy gate:
+UNKNOWN_KNOWLEDGE
+
+Answer Memory:
+score=23.0
+label=science
+intent=definition
+concept=宇宙
+
+v0.9.9 final gate:
+ACCEPT_ANSWER_MEMORY
+```
+
+Explicit FALSE, CONTESTED, or OUTDATED truth states block promotion.
+
+Weak or missing Answer Memory evidence also leaves the original gate unchanged.
+
+### Regression
+
+Run:
+
+```powershell
+python run_answer_aware_gate_regression_v099.py
+```
+
+The regression checks:
+
+```text
+宇宙とは  UNKNOWN -> ACCEPT_ANSWER_MEMORY
+暗号とは  UNKNOWN -> ACCEPT_ANSWER_MEMORY
+CPUとは   ACCEPT stays ACCEPT
+FALSE truth blocks promotion
+weak evidence keeps UNKNOWN
+```
+
+### Runtime
+
+```powershell
+python chat.py
+```
+
+For a high-confidence answer-memory hit, the runtime now prints:
+
+```text
+GATE> promoted to ACCEPT_ANSWER_MEMORY (...)
+SEM> Accepted by high-confidence Semantic Answer Memory: science
+ANS> mode=semantic-answer-memory ...
+AI> ...
+```
+
+New option:
+
+```text
+--answer-gate-min-score 12.0
+```
+
+This keeps semantic routing, answer selection, and gate state consistent without
+globally lowering the legacy similarity threshold.
