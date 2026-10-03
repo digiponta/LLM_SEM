@@ -857,6 +857,17 @@ def main() -> None:
         )
         print_local_runtime(local_decision)
 
+        truth_record = exact_truth_record(memory_path, text)
+        notice = truth_notice(truth_record)
+        if truth_record is not None:
+            print(
+                "TRUTH> "
+                f"state={truth_record.get('truth_status', 'UNVERIFIED')} "
+                f"confidence={float(truth_record.get('truth_confidence', 0.0)):.3f}"
+            )
+            if notice:
+                print("TRUTH> WARNING:", notice)
+
         if semantic_v2_enabled:
             extracted = extract_purpose_intent(text)
             propositions = extract_propositions(
@@ -992,15 +1003,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-        truth_record = exact_truth_record(memory_path, text)
-        notice = truth_notice(truth_record)
-        if truth_record is not None:
-            print(
-                "TRUTH> "
-                f"state={truth_record.get('truth_status', 'UNVERIFIED')} "
-                f"confidence={float(truth_record.get('truth_confidence', 0.0)):.3f}"
-            )
-            if notice:
-                print("TRUTH> WARNING:", notice)
 
 
