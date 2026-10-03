@@ -158,12 +158,59 @@ def main():
         and concept_of(row) in protected_concepts
     ]
 
+    # Recover row-level PARTIAL progress from the current source model.
+    # A previously accepted query may belong to a concept that is still
+    # incomplete overall, so concept-level precheck alone cannot protect it.
+    baseline_json = output.with_name(f"{output.stem}.baseline.runtime.json")
+    _, baseline_metrics = runtime_result(
+        source=source,
+        candidate=source,
+        full_dataset=args.full_dataset,
+        benchmark=args.benchmark,
+        tokenizer=args.tokenizer,
+        result_json=baseline_json,
+        allow_cpu=args.allow_cpu,
+    )
+    baseline_by_query = {
+        str(item.get("query", "")): item
+        for item in baseline_metrics.get("details", [])
+    }
+
+    recovered_partial_rows = []
+    remaining_new_rows = []
+    protected_query_set = {
+        str(row.get("query", ""))
+        for row in protected_rows
+    }
+
+    for row in new_rows:
+        query = str(row.get("query", ""))
+        detail = baseline_by_query.get(query)
+        current_sim = (
+            float(detail.get("source_canonical_similarity", 0.0))
+            if detail is not None
+            else 0.0
+        )
+        if current_sim >= args.min_target_sim:
+            recovered = dict(row)
+            recovered["must_train"] = False
+            recovered["protected"] = True
+            if query not in protected_query_set:
+                protected_rows.append(recovered)
+                protected_query_set.add(query)
+            recovered_partial_rows.append(recovered)
+        else:
+            remaining_new_rows.append(row)
+
+    new_rows = remaining_new_rows
+
     print("=" * 108)
     print(" LLM_SEM v0.10.34 Partial Commit One-by-One Sleep")
     print("=" * 108)
     print("Source model       :", source)
     print("New training rows  :", len(new_rows))
     print("Initial protected  :", len(protected_rows))
+    print("Recovered PARTIAL  :", len(recovered_partial_rows))
     print("Epochs / row       :", args.epochs)
     print("Replay weight      :", args.replay_weight)
     print("New knowledge wt   :", args.new_weight)
