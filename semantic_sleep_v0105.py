@@ -190,7 +190,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.33 Runtime-Aligned One-by-One Sleep")
+    print(" LLM_SEM v0.10.34 Partial Commit One-by-One Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -376,12 +376,83 @@ def main() -> None:
                 completed = True
                 last_round_checkpoint = final_candidate
                 print(
-                    "SLEEP> one-by-one consolidation reached full-runtime PASS:",
+                    "SLEEP> one-by-one consolidation reached COMPLETE:",
                     final_candidate,
                 )
+            elif one_by_one_code == 3:
+                partial_state = one_by_one_candidate.with_name(
+                    f"{one_by_one_candidate.stem}.partial-state.json"
+                )
+                if not partial_state.exists():
+                    raise RuntimeError(
+                        f"partial commit state missing: {partial_state}"
+                    )
+                partial = json.loads(
+                    partial_state.read_text(encoding="utf-8")
+                )
+                accepted_rows = int(partial.get("accepted_rows", 0))
+                runtime = dict(partial.get("runtime", {}))
+                known_failures = int(
+                    runtime.get("known_failures", 10**9)
+                )
+                if (
+                    partial.get("state") != "PARTIAL"
+                    or accepted_rows <= 0
+                    or known_failures != 0
+                ):
+                    raise RuntimeError(
+                        "invalid PARTIAL commit: expected accepted_rows > 0 "
+                        "and known_failures == 0"
+                    )
+
+                final_candidate.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(one_by_one_candidate, final_candidate)
+                final_partial_state = final_candidate.with_name(
+                    f"{final_candidate.stem}.partial-state.json"
+                )
+                shutil.copy2(partial_state, final_partial_state)
+
+                if pending:
+                    restore_targets_to_active(
+                        memory,
+                        target_texts,
+                        model_version=final_candidate.name,
+                    )
+
+                partial_promote_cmd = [
+                    sys.executable,
+                    "promote_active_model_v094.py",
+                    "--candidate", str(final_candidate),
+                    "--manifest", args.manifest,
+                    "--retention-pass",
+                    "--note",
+                    "v0.10.34 PARTIAL row-level sleep commit",
+                ]
+                if args.allow_cpu:
+                    partial_promote_cmd.append("--allow-cpu")
+                run_step(
+                    partial_promote_cmd,
+                    "PARTIAL active model promotion",
+                )
+
+                print()
+                print("=" * 96)
+                print(" PARTIAL SLEEP COMMIT")
+                print("=" * 96)
+                print("State               : PARTIAL")
+                print("Promoted model      :", final_candidate)
+                print("Accepted rows       :", accepted_rows)
+                print("Remaining failures  :", runtime.get("new_failures"))
+                print("Known failures      :", known_failures)
+                print("Manifest            :", args.manifest)
+                print(
+                    "Next /sleep will resume from this PARTIAL model "
+                    "and retry only rows that are still below target."
+                )
+                return
             else:
                 print(
-                    "SLEEP> one-by-one consolidation did not reach full-runtime PASS; "
+                    "SLEEP> no safe row-level progress was found; "
                     "source model remains active."
                 )
                 return
@@ -789,7 +860,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.33 runtime-aligned one-by-one sleep",
+        "--note", "v0.10.34 complete one-by-one sleep",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
