@@ -19,6 +19,7 @@ from semantic_eval import LabeledSentence
 
 MEMORY_ACTIVE_STATES = {"ACTIVE", "TRAINING", "VALIDATING", "FAILED"}
 MEMORY_ALL_STATES = MEMORY_ACTIVE_STATES | {"CONSOLIDATED"}
+TRUTH_STATES = {"TRUE", "FALSE", "UNVERIFIED", "CONTESTED", "OUTDATED"}
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,10 @@ class SemanticMemoryEntry:
     status: str = "ACTIVE"
     model_version: str = ""
     verified: bool = False
+    truth_status: str = "UNVERIFIED"
+    truth_confidence: float = 0.0
+    provenance: str = ""
+    correction_target: str = ""
 
 
 def normalize_text(text: str) -> str:
@@ -62,6 +67,17 @@ def load_semantic_memory_records(path: Path) -> list[dict]:
         item["status"] = status
         item["model_version"] = str(item.get("model_version", ""))
         item["verified"] = bool(item.get("verified", False))
+        truth_status = str(item.get("truth_status", "UNVERIFIED")).upper().strip() or "UNVERIFIED"
+        if truth_status not in TRUTH_STATES:
+            truth_status = "UNVERIFIED"
+        item["truth_status"] = truth_status
+        try:
+            item["truth_confidence"] = float(item.get("truth_confidence", 0.0))
+        except (TypeError, ValueError):
+            item["truth_confidence"] = 0.0
+        item["truth_confidence"] = max(0.0, min(1.0, item["truth_confidence"]))
+        item["provenance"] = str(item.get("provenance", item.get("source", "")))
+        item["correction_target"] = normalize_text(str(item.get("correction_target", "")))
         records.append(item)
     return records
 
@@ -92,6 +108,11 @@ def append_semantic_memory(
     label: str,
     text: str,
     source: str = "manual",
+    *,
+    truth_status: str = "UNVERIFIED",
+    truth_confidence: float = 0.0,
+    provenance: str = "",
+    correction_target: str = "",
 ) -> bool:
     label = normalize_text(label)
     text = normalize_text(text)
@@ -100,6 +121,12 @@ def append_semantic_memory(
         raise ValueError("label must not be empty")
     if not text:
         raise ValueError("text must not be empty")
+    truth_status = truth_status.upper().strip()
+    if truth_status not in TRUTH_STATES:
+        raise ValueError(f"invalid truth_status: {truth_status}")
+    truth_confidence = max(0.0, min(1.0, float(truth_confidence)))
+    provenance = provenance.strip() or source
+    correction_target = normalize_text(correction_target)
 
     existing = {
         (row.label, row.text)
@@ -117,6 +144,10 @@ def append_semantic_memory(
         status="ACTIVE",
         model_version="",
         verified=False,
+        truth_status=truth_status,
+        truth_confidence=truth_confidence,
+        provenance=provenance,
+        correction_target=correction_target,
     )
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(asdict(entry), ensure_ascii=False) + "\n")
@@ -274,3 +305,72 @@ def relabel_semantic_memory(
             encoding="utf-8",
         )
     return changed
+
+
+def truth_status_counts(path: Path) -> dict[str, int]:
+    counts = {state: 0 for state in sorted(TRUTH_STATES)}
+    for item in load_semantic_memory_records(path):
+        state = str(item.get("truth_status", "UNVERIFIED"))
+        counts[state] = counts.get(state, 0) + 1
+    return counts
+
+
+def update_memory_truth(
+    path: Path,
+    text: str,
+    truth_status: str,
+    *,
+    truth_confidence: float | None = None,
+    provenance: str | None = None,
+    correction_target: str | None = None,
+) -> bool:
+    """Update truth metadata without changing lifecycle state."""
+    target = normalize_text(text)
+    truth_status = truth_status.upper().strip()
+    if truth_status not in TRUTH_STATES:
+        raise ValueError(f"invalid truth_status: {truth_status}")
+    if not path.exists():
+        return False
+
+    rows = []
+    changed = False
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    for item in load_semantic_memory_records(path):
+        if normalize_text(item["text"]) == target:
+            item["truth_status"] = truth_status
+            if truth_confidence is not None:
+                item["truth_confidence"] = max(
+                    0.0, min(1.0, float(truth_confidence))
+                )
+            if provenance is not None:
+                item["provenance"] = str(provenance).strip()
+            if correction_target is not None:
+                item["correction_target"] = normalize_text(correction_target)
+            item["timestamp"] = now
+            changed = True
+        rows.append(item)
+
+    if changed:
+        path.write_text(
+            "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in rows),
+            encoding="utf-8",
+        )
+    return changed
+
+
+def truth_notice(item: dict | None) -> str | None:
+    """Return a user-facing notice for non-TRUE truth states."""
+    if item is None:
+        return None
+    state = str(item.get("truth_status", "UNVERIFIED")).upper()
+    if state == "TRUE":
+        return None
+    if state == "FALSE":
+        correction = normalize_text(str(item.get("correction_target", "")))
+        suffix = f" Corrected information: {correction}" if correction else ""
+        return "This information is stored as FALSE / incorrect." + suffix
+    if state == "CONTESTED":
+        return "This information is stored as CONTESTED; multiple interpretations or claims may exist."
+    if state == "OUTDATED":
+        return "This information is stored as OUTDATED and may no longer be current."
+    return "This information is stored as UNVERIFIED and has not been confirmed."
