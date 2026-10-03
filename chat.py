@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.7 Sleep Retention Recovery
+# LLM_SEM v0.10.8 Internal Knowledge Probe
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -647,7 +647,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.7 Sleep Retention Recovery")
+    print(" LLM_SEM v0.10.8 Internal Knowledge Probe")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -684,11 +684,12 @@ def main() -> None:
     print("  /teach <label|answer> teach a semantic label or trusted answer")
     print("  /forget              remove semantic teaching for previous utterance")
     print("  /train               reload learned memories (compatibility command)")
-    print("  /sleep               consolidate ACTIVE Semantic Memory into the internal LLM")
+    print("  /sleep               consolidate external memories into the internal LLM")
+    print("  /internal <query>    probe only the internal model; bypass external memories")
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.7 runtime policy")
+    print("  /runtime              show v0.10.8 runtime policy")
     print("  /quit")
     print()
 
@@ -699,6 +700,58 @@ def main() -> None:
 
         if text in ("/quit", "/exit", "quit", "exit"):
             break
+
+        if text.startswith("/internal"):
+            parts = text.split(maxsplit=1)
+            if len(parts) != 2 or not parts[1].strip():
+                print("Usage: /internal <query>")
+                continue
+
+            probe_text = parts[1].strip()
+            ranked_internal = base_router.route(probe_text)
+            if not ranked_internal:
+                print("INTERNAL> no semantic candidate.")
+                continue
+
+            top = ranked_internal[0]
+            second = ranked_internal[1] if len(ranked_internal) > 1 else None
+            margin_internal = float(
+                top.similarity - (second.similarity if second is not None else -1.0)
+            )
+
+            extracted_internal = extract_purpose_intent(probe_text)
+            props_internal = extract_propositions(
+                extracted_internal.concept_texts[0]
+                if extracted_internal.concept_texts
+                else probe_text
+            )
+            concepts_internal = proposition_concepts(
+                extracted_internal.concept_texts,
+                props_internal,
+            )
+
+            answer_internal, generation_mode = generate_answer(
+                model,
+                tokenizer,
+                probe_text,
+                args,
+                selected_label=top.label,
+                gate="INTERNAL_PROBE",
+                intent=extracted_internal.intent,
+                concepts=concepts_internal,
+                truth_record=None,
+            )
+
+            print(
+                "INTERNAL> bypass=SemanticMemory,AnswerMemory,RelationMemory "
+                f"model={args.model}"
+            )
+            print(
+                f"INTERNAL> label={top.label} sim={top.similarity:.6f} "
+                f"margin={margin_internal:.6f} mode={generation_mode}"
+            )
+            print("AI-INTERNAL>", answer_internal)
+            continue
 
         if text == "/forget":
             if last_text is None:
@@ -842,7 +895,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.10.7 Sleep Retention Recovery")
+            print("Runtime        : LLM_SEM v0.10.8 Internal Knowledge Probe")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
