@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.9.5 Truth-Aware Answering Runtime
+# LLM_SEM v0.9.6 Semantic-Guided Answer Generation
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -456,18 +456,69 @@ def print_teaching_effect(
     print("TCH> --------------------------------------------------------")
 
 
+def build_semantic_generation_prompt(
+    text: str,
+    *,
+    selected_label: str,
+    gate: str,
+    intent: str | None,
+    concepts: list[str] | None,
+    truth_record: dict | None,
+) -> str:
+    """Build a compact generation prompt from semantic runtime state.
+
+    The model is small and not instruction-tuned, so the prompt deliberately
+    stays short and regular rather than adding a long system-style instruction.
+    """
+    concept_text = "、".join(concepts or []) or text
+    truth = (
+        str(truth_record.get("truth_status", "UNVERIFIED"))
+        if truth_record is not None
+        else "UNKNOWN"
+    )
+    intent_text = intent or "general"
+    return (
+        f"質問:{text}\n"
+        f"分類:{selected_label}\n"
+        f"目的:{intent_text}\n"
+        f"概念:{concept_text}\n"
+        f"真偽:{truth}\n"
+        "回答:"
+    )
+
+
 def generate_answer(
     model: LanguageModel,
     tokenizer: Tokenizer,
     text: str,
     args: argparse.Namespace,
-) -> str:
-    """Generate a user-visible answer independently from semantic gate state."""
-    prompt_ids = tokenizer.encode(text, add_bos=True, add_eos=False)
+    *,
+    selected_label: str | None = None,
+    gate: str | None = None,
+    intent: str | None = None,
+    concepts: list[str] | None = None,
+    truth_record: dict | None = None,
+) -> tuple[str, str]:
+    """Generate a user-visible answer using semantic guidance when available."""
+    if selected_label:
+        prompt = build_semantic_generation_prompt(
+            text,
+            selected_label=selected_label,
+            gate=gate or "UNKNOWN",
+            intent=intent,
+            concepts=concepts,
+            truth_record=truth_record,
+        )
+        mode = "semantic-guided"
+    else:
+        prompt = text
+        mode = "raw"
+
+    prompt_ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
     generated = model.generate(
         prompt_ids,
         max_new_tokens=max(1, int(args.max_new_tokens)),
-        eos_id=None,
+        eos_id=tokenizer.eos_id,
         temperature=float(args.temperature),
         top_k=max(1, int(args.top_k)),
         repetition_penalty=1.15,
@@ -475,13 +526,12 @@ def generate_answer(
     continuation = generated[len(prompt_ids):]
     answer = tokenizer.decode(continuation, skip_special_tokens=True).strip()
     if answer:
-        return answer
+        return answer, mode
 
-    # Defensive fallback: decode the full sequence and remove the original text.
     full = tokenizer.decode(generated, skip_special_tokens=True)
-    if full.startswith(text):
-        full = full[len(text):]
-    return full.strip() or "(generation produced no visible tokens)"
+    if full.startswith(prompt):
+        full = full[len(prompt):]
+    return full.strip() or "(generation produced no visible tokens)", mode
 
 
 def resolve_runtime_model(args: argparse.Namespace) -> str:
@@ -563,7 +613,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.9.5 Truth-Aware Answering Runtime")
+    print(" LLM_SEM v0.9.6 Semantic-Guided Answer Generation")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -594,7 +644,7 @@ def main() -> None:
     print("  /teach <label>       teach the previous user utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.9.5 runtime policy")
+    print("  /runtime              show v0.9.6 runtime policy")
     print("  /quit")
     print()
 
@@ -674,7 +724,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.9.5 Truth-Aware Answering Runtime")
+            print("Runtime        : LLM_SEM v0.9.6 Semantic-Guided Answer Generation")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
@@ -1040,7 +1090,32 @@ def main() -> None:
             )
 
         if args.answer:
-            answer = generate_answer(model, tokenizer, text, args)
+            if semantic_v2_enabled:
+                generation_intent = extracted.intent
+                generation_concepts = concept_texts
+            else:
+                fallback_extracted = extract_purpose_intent(text)
+                generation_intent = fallback_extracted.intent
+                generation_concepts = fallback_extracted.concept_texts
+
+            answer, generation_mode = generate_answer(
+                model,
+                tokenizer,
+                text,
+                args,
+                selected_label=last_snapshot.selected_label,
+                gate=gate,
+                intent=generation_intent,
+                concepts=generation_concepts,
+                truth_record=truth_record,
+            )
+            print(
+                "GEN> "
+                f"mode={generation_mode} "
+                f"label={last_snapshot.selected_label} "
+                f"intent={generation_intent or 'general'} "
+                f"truth={truth_record.get('truth_status', 'UNKNOWN') if truth_record else 'UNKNOWN'}"
+            )
             print("AI>", answer)
 
 
