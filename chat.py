@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.2 LLM_TRY Command Compatibility
+# LLM_SEM v0.10.3 Fact Merge Learning
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -54,7 +54,12 @@ from semantic_proposition_v036 import (
 )
 from tokenizer import Tokenizer
 from answer_aware_gate_v099 import apply_answer_aware_gate
-from relation_memory_v0101 import DEFAULT_RELATION_MEMORY, append_relation_fact
+from relation_memory_v0101 import (
+    DEFAULT_RELATION_MEMORY,
+    append_relation_fact,
+    compose_subject_facts,
+    parse_relation_fact,
+)
 from semantic_answer_memory_v098 import (
     DEFAULT_ANSWER_MEMORY,
     DEFAULT_LEARNED_ANSWER_MEMORY,
@@ -636,7 +641,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.2 LLM_TRY Command Compatibility")
+    print(" LLM_SEM v0.10.3 Fact Merge Learning")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -676,7 +681,7 @@ def main() -> None:
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.2 runtime policy")
+    print("  /runtime              show v0.10.3 runtime policy")
     print("  /quit")
     print()
 
@@ -723,7 +728,7 @@ def main() -> None:
             teach_value = text.split(maxsplit=1)[1].strip()
             if (
                 len(teach_value) >= 16
-                or any(mark in teach_value for mark in ("。", "、", "です", "である", "は、", "を", "する"))
+                or any(mark in teach_value for mark in ("。", "、", "です", "である", "は", "を", "する"))
             ):
                 text = "/teach-answer " + teach_value
                 print("TCH> interpreted /teach argument as a trusted answer.")
@@ -796,7 +801,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.10.2 LLM_TRY Command Compatibility")
+            print("Runtime        : LLM_SEM v0.10.3 Fact Merge Learning")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
@@ -854,11 +859,39 @@ def main() -> None:
                 concepts=answer_concepts,
                 truth_status=truth_state,
             )
+            parsed_fact = parse_relation_fact(trusted_answer)
             relation_added = append_relation_fact(
                 args.relation_memory,
                 trusted_answer,
             )
-            if added:
+
+            merged_answer = ""
+            if parsed_fact is not None:
+                merged_answer = compose_subject_facts(
+                    args.relation_memory,
+                    str(parsed_fact.get("subject", "")),
+                )
+
+            if merged_answer:
+                answer_memory.upsert_persistent(
+                    args.learned_answer_memory,
+                    query=last_text,
+                    answer=merged_answer,
+                    label=last_snapshot.selected_label,
+                    intent=extracted_answer.intent,
+                    concepts=answer_concepts,
+                    truth_status=truth_state,
+                    source="chat-fact-merge",
+                )
+                print(
+                    "FACT> merged subject knowledge: "
+                    f"{merged_answer}"
+                )
+                print(
+                    "Learned canonical answer: "
+                    f"query={last_text!r} -> {args.learned_answer_memory}"
+                )
+            elif added:
                 print(
                     "Learned answer: "
                     f"query={last_text!r} label={last_snapshot.selected_label!r} "
@@ -866,15 +899,11 @@ def main() -> None:
                 )
             else:
                 print("Answer already learned or invalid.")
+
             if relation_added:
                 print(
                     "Learned relation fact -> "
                     f"{args.relation_memory}"
-                )
-                print(
-                    "INFO> rebuild unified memory to enable reverse/contextual "
-                    "relation lookup: "
-                    "python build_unified_semantic_answer_memory_v0100.py"
                 )
             continue
 
