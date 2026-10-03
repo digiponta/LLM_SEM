@@ -30,6 +30,9 @@ import torch.nn.functional as F
 from chat import build_semantic_generation_prompt
 from model import LanguageModel
 from semantic_eval import load_benchmark
+from semantic_router import SemanticRouter
+from semantic_intent_v034 import extract_purpose_intent
+from semantic_proposition_v036 import extract_propositions, proposition_concepts
 from tokenizer import Tokenizer
 
 
@@ -280,15 +283,85 @@ def semantic_vector(
     )[0]
 
 
+@torch.no_grad()
+def build_runtime_replay_rows(
+    teacher: LanguageModel,
+    tokenizer: Tokenizer,
+    benchmark,
+    rows: list[dict],
+    device: torch.device,
+    alpha: float,
+) -> list[dict]:
+    router = SemanticRouter(teacher, tokenizer, alpha=alpha)
+    router.fit(benchmark)
+    replay_rows = []
+
+    for row in rows:
+        query = str(row["query"])
+        ranked = router.route(query)
+        if not ranked:
+            continue
+        top = ranked[0]
+
+        extracted = extract_purpose_intent(query)
+        props = extract_propositions(
+            extracted.concept_texts[0]
+            if extracted.concept_texts
+            else query
+        )
+        concepts = proposition_concepts(
+            extracted.concept_texts,
+            props,
+        )
+
+        prompt = build_semantic_generation_prompt(
+            query,
+            selected_label=top.label,
+            gate="INTERNAL_PROBE",
+            intent=extracted.intent,
+            concepts=concepts,
+            truth_record=None,
+        )
+        prompt_ids = tokenizer.encode(
+            prompt,
+            add_bos=True,
+            add_eos=False,
+        )
+        generated = teacher.generate(
+            prompt_ids,
+            max_new_tokens=96,
+            eos_id=tokenizer.eos_id,
+            temperature=0.2,
+            top_k=1,
+            repetition_penalty=1.10,
+        )
+        continuation = generated[len(prompt_ids):]
+        answer = tokenizer.decode(
+            continuation,
+            skip_special_tokens=True,
+        ).strip()
+        answer = stabilize_generated_answer(answer)
+
+        if answer:
+            replay_rows.append({
+                "query": query,
+                "prompt": prompt,
+                "answer": answer,
+                "selected_label": str(top.label),
+            })
+
+    return replay_rows
+
+
 def protected_distillation_loss(
     student: LanguageModel,
     teacher: LanguageModel,
     tokenizer: Tokenizer,
-    row: dict,
+    replay_row: dict,
     device: torch.device,
 ) -> torch.Tensor:
-    prompt = build_prompt(row)
-    answer = row["answer"]
+    prompt = str(replay_row["prompt"])
+    answer = str(replay_row["answer"])
 
     prompt_ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
     answer_ids = tokenizer.encode(answer, add_bos=False, add_eos=True)
@@ -311,7 +384,6 @@ def protected_distillation_loss(
         teacher_probs,
         reduction="batchmean",
     ) / max(1, student_logits.size(1))
-
 
 def semantic_vector_grad(
     model: LanguageModel,
@@ -491,6 +563,18 @@ def main() -> None:
         for row in benchmark
     }
 
+    protected_source_rows = [
+        row for row in train_rows if bool(row.get("protected", False))
+    ]
+    runtime_replay_rows = build_runtime_replay_rows(
+        teacher,
+        tokenizer,
+        benchmark,
+        protected_source_rows,
+        device,
+        args.alpha,
+    )
+
     optimizer = torch.optim.AdamW(
         [
             {"params": semantic_params, "lr": args.learning_rate},
@@ -524,6 +608,7 @@ def main() -> None:
     print("Concept balanced    :", args.concept_balanced)
     print("Protected rows      :", sum(int(bool(r.get("protected", False))) for r in train_rows))
     print("Protected distill wt:", args.protected_distill_weight)
+    print("Runtime replay rows :", len(runtime_replay_rows))
     print("Before train QA NLL :", f"{before_train:.6f}")
     print("Before holdout NLL  :", f"{before_test:.6f}")
     print()
@@ -565,19 +650,16 @@ def main() -> None:
             )
         preserve_loss = torch.stack(preserve_losses).mean()
 
-        protected_rows = [
-            row for row in train_rows if bool(row.get("protected", False))
-        ]
-        if protected_rows and args.protected_distill_weight > 0.0:
+        if runtime_replay_rows and args.protected_distill_weight > 0.0:
             protected_losses = [
                 protected_distillation_loss(
                     student,
                     teacher,
                     tokenizer,
-                    row,
+                    replay_row,
                     device,
                 )
-                for row in protected_rows
+                for replay_row in runtime_replay_rows
             ]
             protected_loss = torch.stack(protected_losses).mean()
         else:
