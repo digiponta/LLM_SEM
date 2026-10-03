@@ -61,6 +61,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train-blocks", type=int, default=1)
     p.add_argument("--min-generation-sim", type=float, default=0.0)
     p.add_argument("--result-json", default="")
+    p.add_argument("--prefer-final-state", action="store_true")
     return p.parse_args()
 
 
@@ -218,6 +219,55 @@ def mean_qa_loss(model, tokenizer, rows, device):
     return sum(vals) / len(vals) if vals else 0.0
 
 
+def stabilize_generated_answer(text: str) -> str:
+    """Keep one complete Japanese answer sentence and discard runaway tails."""
+    text = str(text).strip()
+    if not text:
+        return text
+    end = text.find("。")
+    if end >= 0:
+        return text[: end + 1].strip()
+    return text
+
+
+def generation_quality(text: str) -> dict[str, float | bool]:
+    raw = str(text)
+    stable = stabilize_generated_answer(raw)
+    terminated = stable.endswith("。")
+    if not stable:
+        return {
+            "terminated": False,
+            "abnormal_ratio": 1.0,
+            "repetition_ratio": 1.0,
+        }
+
+    abnormal = sum(
+        1 for ch in stable
+        if not (
+            ch.isalnum()
+            or ch.isspace()
+            or "\u3040" <= ch <= "\u30ff"
+            or "\u3400" <= ch <= "\u9fff"
+            or ch in "。、・「」『』（）()：:！？!?ー〜～,%％+-=/"
+        )
+    )
+    abnormal_ratio = abnormal / max(1, len(stable))
+
+    chunks = [
+        stable[i:i+4]
+        for i in range(max(0, len(stable) - 3))
+    ]
+    repetition_ratio = (
+        1.0 - len(set(chunks)) / len(chunks)
+        if chunks else 0.0
+    )
+    return {
+        "terminated": terminated,
+        "abnormal_ratio": abnormal_ratio,
+        "repetition_ratio": repetition_ratio,
+    }
+
+
 @torch.no_grad()
 def generation_similarity(
     model: LanguageModel,
@@ -239,9 +289,10 @@ def generation_similarity(
         repetition_penalty=1.10,
     )
     continuation = generated[len(prompt_ids):]
-    answer = tokenizer.decode(continuation, skip_special_tokens=True).strip()
+    answer_raw = tokenizer.decode(continuation, skip_special_tokens=True).strip()
+    answer = stabilize_generated_answer(answer_raw)
 
-    expected = "".join(str(row["answer"]).split())
+    expected = "".join(stabilize_generated_answer(str(row["answer"])).split())
     actual = "".join(answer.split())
     ratio = SequenceMatcher(None, expected, actual).ratio() if expected or actual else 1.0
     return ratio, answer
@@ -423,7 +474,9 @@ def main() -> None:
                 f"sem_cos={sem_cos:.6f}{marker}"
             )
 
-    if best_state is not None:
+    if args.prefer_final_state:
+        print("Quality-selected checkpoint: final state preferred for iterative sleep.")
+    elif best_state is not None:
         student.load_state_dict(best_state)
         student.to(device)
         print(
@@ -447,6 +500,22 @@ def main() -> None:
     generation_min = (
         min((ratio for _, ratio, _, _ in generation_details), default=1.0)
     )
+    quality_details = [
+        generation_quality(generated)
+        for _, _, _, generated in generation_details
+    ]
+    termination_rate = (
+        sum(int(bool(q["terminated"])) for q in quality_details) / len(quality_details)
+        if quality_details else 1.0
+    )
+    abnormal_ratio_max = max(
+        (float(q["abnormal_ratio"]) for q in quality_details),
+        default=0.0,
+    )
+    repetition_ratio_max = max(
+        (float(q["repetition_ratio"]) for q in quality_details),
+        default=0.0,
+    )
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -465,6 +534,9 @@ def main() -> None:
     print("Semantic cosine :", f"{sem_cos:.6f}")
     print("Mandatory generation similarity:", f"{generation_sim:.6f}")
     print("Mandatory minimum similarity   :", f"{generation_min:.6f}")
+    print("Natural termination rate       :", f"{termination_rate:.6f}")
+    print("Maximum abnormal-char ratio    :", f"{abnormal_ratio_max:.6f}")
+    print("Maximum repetition ratio       :", f"{repetition_ratio_max:.6f}")
     print("Saved checkpoint:", output)
     print("Selected epoch  :", best_epoch if best_state is not None else args.epochs)
     if generation_details:
@@ -503,6 +575,9 @@ def main() -> None:
                     "semantic_cosine": sem_cos,
                     "generation_similarity_mean": generation_sim,
                     "generation_similarity_min": generation_min,
+                    "termination_rate": termination_rate,
+                    "abnormal_ratio_max": abnormal_ratio_max,
+                    "repetition_ratio_max": repetition_ratio_max,
                     "generation_details": [
                         {
                             "query": query,
