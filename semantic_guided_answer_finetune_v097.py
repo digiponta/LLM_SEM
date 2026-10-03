@@ -67,6 +67,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--prefer-final-state", action="store_true")
     p.add_argument("--concept-balanced", action="store_true")
     p.add_argument("--protected-distill-weight", type=float, default=0.0)
+    p.add_argument("--new-knowledge-weight", type=float, default=1.0)
     return p.parse_args()
 
 
@@ -608,6 +609,7 @@ def main() -> None:
     print("Concept balanced    :", args.concept_balanced)
     print("Protected rows      :", sum(int(bool(r.get("protected", False))) for r in train_rows))
     print("Protected distill wt:", args.protected_distill_weight)
+    print("New knowledge weight:", args.new_knowledge_weight)
     print("Runtime replay rows :", len(runtime_replay_rows))
     print("Before train QA NLL :", f"{before_train:.6f}")
     print("Before holdout NLL  :", f"{before_test:.6f}")
@@ -666,7 +668,7 @@ def main() -> None:
             protected_loss = torch.tensor(0.0, device=device)
 
         total = (
-            qa_loss
+            args.new_knowledge_weight * qa_loss
             + args.preserve_weight * preserve_loss
             + args.protected_distill_weight * protected_loss
         )
@@ -817,6 +819,7 @@ def main() -> None:
                     "holdout_nll_after": after_test,
                     "semantic_cosine": sem_cos,
                     "protected_distillation_loss": float(protected_loss.item()),
+                    "new_knowledge_weight": float(args.new_knowledge_weight),
                     "generation_similarity_mean": generation_sim,
                     "generation_similarity_min": generation_min,
                     "concept_generation_mean": concept_generation_mean,
