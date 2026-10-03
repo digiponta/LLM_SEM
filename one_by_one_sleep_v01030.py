@@ -1,6 +1,6 @@
 # one_by_one_sleep_v01030.py
 #
-# LLM_SEM v0.10.30
+# LLM_SEM v0.10.32
 # Learn exactly one new QA row at a time.
 # After each row:
 #   - protect previously known/accepted rows with runtime replay,
@@ -21,7 +21,7 @@ from pathlib import Path
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.30 One-by-One Sleep Consolidation"
+        description="LLM_SEM v0.10.32 One-by-One Safe Retry Sleep"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -82,8 +82,8 @@ def save_step_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.30",
-                "mode": "one-by-one",
+                "version": "v0.10.32",
+                "mode": "one-by-one-safe-retry",
                 "samples": rows,
             },
             ensure_ascii=False,
@@ -142,22 +142,24 @@ def main():
         row for row in incremental_rows
         if bool(row.get("must_train", False))
     ]
-    protected_queries = {
-        str(item.get("query", ""))
+    protected_concepts = {
+        str(item.get("concept", "")).strip()
         for item in precheck.get("details", [])
         if bool(item.get("passed", False))
+        and str(item.get("concept", "")).strip()
     }
 
-    # Use full-dataset rows for protected anchors so the original metadata is kept.
-    by_query = {str(row.get("query", "")): row for row in full_rows}
+    # Protect every mandatory runtime row belonging to an already-passing
+    # concept, not only the representative precheck query.
     protected_rows = [
-        dict(by_query[q])
-        for q in protected_queries
-        if q in by_query
+        dict(row)
+        for row in full_rows
+        if bool(row.get("must_train", False))
+        and concept_of(row) in protected_concepts
     ]
 
     print("=" * 108)
-    print(" LLM_SEM v0.10.30 One-by-One Sleep Consolidation")
+    print(" LLM_SEM v0.10.32 One-by-One Safe Retry Sleep")
     print("=" * 108)
     print("Source model       :", source)
     print("New training rows  :", len(new_rows))
@@ -208,108 +210,197 @@ def main():
         print("ANSWER :", answer)
         print("PROTECTED ANCHORS:", len(anchors))
 
-        train_cmd = [
-            sys.executable,
-            "semantic_guided_answer_finetune_v097.py",
-            "--model", str(current_source),
-            "--tokenizer", args.tokenizer,
-            "--dataset", str(step_dataset),
-            "--benchmark", args.benchmark,
-            "--output", str(step_candidate),
-            "--epochs", str(args.epochs),
-            "--learning-rate", str(args.learning_rate),
-            "--lm-head-lr", str(args.lm_head_lr),
-            "--preserve-weight", str(args.preserve_weight),
-            "--train-blocks", str(args.train_blocks),
-            "--protected-distill-weight", str(args.replay_weight),
-            "--new-knowledge-weight", str(args.new_weight),
-            "--min-generation-sim", "0.0",
-            "--result-json", str(train_json),
-            "--prefer-final-state",
-            "--concept-balanced",
+        # Each target row is still learned independently, but several safe
+        # hyperparameter attempts are tried from the SAME committed source.
+        # Only the best protected-safe attempt may become the next source.
+        attempts = [
+            # epochs, lr_scale, replay_weight, new_weight
+            (120, 0.60, 2.0, 4.0),
+            (160, 0.80, 2.0, 5.0),
+            (200, 1.00, 2.0, 6.0),
+            (240, 1.00, 1.0, 6.0),
+            (240, 1.20, 1.0, 8.0),
         ]
-        if args.allow_cpu:
-            train_cmd.append("--allow-cpu")
 
-        if run(train_cmd) != 0:
-            print("DECISION: REJECT / ROLLBACK (training failure)")
-            rejected += 1
-            continue
+        best = None
+        anchor_queries = {
+            str(r.get("query", ""))
+            for r in anchors
+        }
 
-        _, metrics = runtime_result(
-            source=current_source,
-            candidate=step_candidate,
-            full_dataset=args.full_dataset,
-            benchmark=args.benchmark,
-            tokenizer=args.tokenizer,
-            result_json=runtime_json,
-            allow_cpu=args.allow_cpu,
-        )
-
-        detail = find_detail(metrics, query)
-        if detail is None:
-            print("DECISION: REJECT / ROLLBACK (target query missing from runtime report)")
-            rejected += 1
-            continue
-
-        target_before = float(detail.get("source_canonical_similarity", 0.0))
-        target_after = float(detail.get("candidate_canonical_similarity", 0.0))
-        target_gain = target_after - target_before
-
-        # Protected set is the knowledge already committed before this step.
-        protected_failures = []
-        for item in metrics.get("details", []):
-            q = str(item.get("query", ""))
-            if q not in {str(r.get("query", "")) for r in anchors}:
-                continue
-            before = float(item.get("source_canonical_similarity", 0.0))
-            after = float(item.get("candidate_canonical_similarity", 0.0))
-            drop = before - after
-            pair = float(item.get("source_candidate_similarity", 0.0))
-            passed = (
-                drop <= args.max_protected_drop
-                and pair >= 0.70
+        for attempt_index, (epochs, lr_scale, replay_weight, new_weight) in enumerate(attempts, 1):
+            attempt_candidate = output.with_name(
+                f"{output.stem}.step{index}.try{attempt_index}{output.suffix}"
             )
-            if not passed:
-                protected_failures.append({
-                    "query": q,
-                    "drop": drop,
-                    "pair": pair,
-                })
-
-        target_ok = (
-            target_after >= args.min_target_sim
-            and (
-                target_gain >= args.min_target_gain
-                or target_after >= 0.999999
+            train_json = output.with_name(
+                f"{output.stem}.step{index}.try{attempt_index}.train.json"
             )
-        )
-        protected_ok = not protected_failures
+            runtime_json = output.with_name(
+                f"{output.stem}.step{index}.try{attempt_index}.runtime.json"
+            )
 
-        print(
-            "TARGET : "
-            f"canonical={target_before:.6f}->{target_after:.6f} "
-            f"gain={target_gain:+.6f}"
-        )
-        print("PROTECTED FAILURES:", len(protected_failures))
-        for item in protected_failures:
+            print()
             print(
-                "  -",
-                item["query"],
-                f"drop={item['drop']:+.6f}",
-                f"pair={item['pair']:.6f}",
+                f"TRY {attempt_index}/{len(attempts)}: "
+                f"epochs={epochs} lr_scale={lr_scale:.2f} "
+                f"replay={replay_weight:.1f} new={new_weight:.1f}"
             )
 
-        if target_ok and protected_ok:
-            print("DECISION: ACCEPT")
-            current_source = step_candidate
+            train_cmd = [
+                sys.executable,
+                "semantic_guided_answer_finetune_v097.py",
+                "--model", str(current_source),
+                "--tokenizer", args.tokenizer,
+                "--dataset", str(step_dataset),
+                "--benchmark", args.benchmark,
+                "--output", str(attempt_candidate),
+                "--epochs", str(epochs),
+                "--learning-rate", str(args.learning_rate * lr_scale),
+                "--lm-head-lr", str(args.lm_head_lr * lr_scale),
+                "--preserve-weight", str(args.preserve_weight),
+                "--train-blocks", str(args.train_blocks),
+                "--protected-distill-weight", str(replay_weight),
+                "--new-knowledge-weight", str(new_weight),
+                "--min-generation-sim", "0.0",
+                "--result-json", str(train_json),
+                "--prefer-final-state",
+                "--concept-balanced",
+            ]
+            if args.allow_cpu:
+                train_cmd.append("--allow-cpu")
+
+            if run(train_cmd) != 0:
+                print("TRY RESULT: TRAINING FAILURE")
+                continue
+
+            _, metrics = runtime_result(
+                source=current_source,
+                candidate=attempt_candidate,
+                full_dataset=args.full_dataset,
+                benchmark=args.benchmark,
+                tokenizer=args.tokenizer,
+                result_json=runtime_json,
+                allow_cpu=args.allow_cpu,
+            )
+
+            detail = find_detail(metrics, query)
+            if detail is None:
+                print("TRY RESULT: target query missing from runtime report")
+                continue
+
+            target_before = float(
+                detail.get("source_canonical_similarity", 0.0)
+            )
+            target_after = float(
+                detail.get("candidate_canonical_similarity", 0.0)
+            )
+            target_gain = target_after - target_before
+
+            protected_failures = []
+            max_drop = 0.0
+            min_pair = 1.0
+            for item in metrics.get("details", []):
+                q = str(item.get("query", ""))
+                if q not in anchor_queries:
+                    continue
+                before = float(
+                    item.get("source_canonical_similarity", 0.0)
+                )
+                after = float(
+                    item.get("candidate_canonical_similarity", 0.0)
+                )
+                drop = before - after
+                pair = float(
+                    item.get("source_candidate_similarity", 0.0)
+                )
+                max_drop = max(max_drop, drop)
+                min_pair = min(min_pair, pair)
+                passed = (
+                    drop <= args.max_protected_drop
+                    and pair >= 0.70
+                )
+                if not passed:
+                    protected_failures.append({
+                        "query": q,
+                        "drop": drop,
+                        "pair": pair,
+                    })
+
+            target_ok = (
+                target_after >= args.min_target_sim
+                and (
+                    target_gain >= args.min_target_gain
+                    or target_after >= 0.999999
+                )
+            )
+            protected_ok = not protected_failures
+
+            print(
+                "TRY TARGET: "
+                f"{target_before:.6f}->{target_after:.6f} "
+                f"gain={target_gain:+.6f}"
+            )
+            print(
+                "TRY PROTECTION: "
+                f"failures={len(protected_failures)} "
+                f"max_drop={max_drop:+.6f} "
+                f"min_pair={min_pair:.6f}"
+            )
+
+            if protected_failures:
+                for item in protected_failures:
+                    print(
+                        "  -",
+                        item["query"],
+                        f"drop={item['drop']:+.6f}",
+                        f"pair={item['pair']:.6f}",
+                    )
+
+            if not (target_ok and protected_ok):
+                print("TRY RESULT: REJECT")
+                continue
+
+            score = (
+                target_after,
+                target_gain,
+                -max_drop,
+                min_pair,
+            )
+            if best is None or score > best["score"]:
+                best = {
+                    "score": score,
+                    "candidate": attempt_candidate,
+                    "target_before": target_before,
+                    "target_after": target_after,
+                    "target_gain": target_gain,
+                    "attempt": attempt_index,
+                    "epochs": epochs,
+                    "lr_scale": lr_scale,
+                    "replay_weight": replay_weight,
+                    "new_weight": new_weight,
+                }
+                print("TRY RESULT: SAFE CANDIDATE")
+            else:
+                print("TRY RESULT: SAFE, but not best")
+
+        if best is not None:
+            print()
+            print(
+                "DECISION: ACCEPT "
+                f"try={best['attempt']} "
+                f"canonical={best['target_before']:.6f}"
+                f"->{best['target_after']:.6f} "
+                f"gain={best['target_gain']:+.6f}"
+            )
+            current_source = Path(best["candidate"])
             accepted_row = dict(target)
             accepted_row["must_train"] = False
             accepted_row["protected"] = True
             accepted_rows.append(accepted_row)
             accepted += 1
         else:
-            print("DECISION: REJECT / ROLLBACK")
+            print()
+            print("DECISION: REJECT / ROLLBACK (all retries unsafe or insufficient)")
             print("ROLLBACK SOURCE:", current_source)
             rejected += 1
 
