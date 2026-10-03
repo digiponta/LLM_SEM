@@ -3845,3 +3845,120 @@ ordinary semantic-topic space.
 As with v0.9.1, this is supervised truth-state learning, not autonomous factual
 verification. Explicit provenance and Truth-Aware Semantic Memory remain the
 auditable source of supervision.
+
+
+## v0.9.3 Evidence-Aware Truth Representation
+
+v0.9.2 showed that a stronger projection alone did not solve truth-state
+generalization. Training accuracy reached almost 100%, but multi-seed holdout
+mean fell to 40%. This suggests that truth state is not reliably encoded by
+query semantics alone.
+
+v0.9.3 changes the task:
+
+```text
+Truth = f(query proposition, reference/evidence proposition, relation)
+```
+
+rather than:
+
+```text
+Truth = f(query proposition only)
+```
+
+Architecture:
+
+```text
+Query Semantic Vector (64)
+Reference Semantic Vector (64)
+|Query-Reference| (64)
+Query*Reference (64)
+Cosine similarity (1)
+Evidence relation one-hot (5)
+            |
+            v
+Evidence Truth Head
+            |
+            +-- TRUE
+            +-- FALSE
+            +-- UNVERIFIED
+            +-- CONTESTED
+            +-- OUTDATED
+```
+
+Evidence relations:
+
+```text
+SUPPORTS
+CONTRADICTS
+UNCERTAIN
+SUPERSEDED
+DISPUTED
+```
+
+The base LLM_SEM encoder remains frozen.
+
+### Dataset
+
+```text
+data/truth_evidence_pairs_v093.json
+```
+
+contains controlled query/reference pairs with explicit evidence relations.
+
+### Train and evaluate
+
+```powershell
+python truth_evidence_projection_v093.py
+```
+
+The experiment runs 10 stratified seeds by default and reports mean, standard
+deviation, minimum, maximum, and best-seed per-class holdout results.
+
+Output:
+
+```text
+model/truth-evidence-projection-v093.pt
+```
+
+### Runtime
+
+Example contradiction:
+
+```powershell
+python truth_evidence_runtime_v093.py \
+  "太陽は地球の周りを公転する" \
+  "地球は太陽の周りを公転する" \
+  CONTRADICTS
+```
+
+Example support:
+
+```powershell
+python truth_evidence_runtime_v093.py \
+  "月は地球の衛星である" \
+  "月は地球の衛星である" \
+  SUPPORTS
+```
+
+### Interpretation
+
+This experiment does not ask the model to infer truth from semantic topic alone.
+It explicitly models the relation between a proposition and supporting,
+contradicting, uncertain, superseding, or disputed evidence.
+
+This is closer to the intended Truth-Aware Semantic Memory design:
+
+```text
+Semantic proposition
+       +
+Evidence / reference proposition
+       +
+Evidence relation
+       |
+       v
+Truth state
+```
+
+Explicit provenance remains authoritative and auditable. The learned head is a
+relation-aware classifier, not an autonomous source of objective truth.
