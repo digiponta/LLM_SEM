@@ -374,3 +374,20 @@ def truth_notice(item: dict | None) -> str | None:
     if state == "OUTDATED":
         return "This information is stored as OUTDATED and may no longer be current."
     return "This information is stored as UNVERIFIED and has not been confirmed."
+
+def exact_truth_record(path: Path, text: str) -> dict | None:
+    """Return truth metadata for an exact record regardless of lifecycle state."""
+    target = normalize_text(text)
+    matches = [
+        item for item in load_semantic_memory_records(path)
+        if normalize_text(item["text"]) == target
+    ]
+    if not matches:
+        return None
+
+    # Prefer active/authoritative memory while migration is incomplete.
+    for item in matches:
+        if item["status"] in MEMORY_ACTIVE_STATES:
+            return item
+    return matches[0]
+\n
