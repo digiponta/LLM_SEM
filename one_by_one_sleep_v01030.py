@@ -1,6 +1,6 @@
 # one_by_one_sleep_v01030.py
 #
-# LLM_SEM v0.10.38
+# LLM_SEM v0.10.39
 # Learn exactly one new QA row at a time.
 # After each row:
 #   - protect previously known/accepted rows with runtime replay,
@@ -21,7 +21,7 @@ from pathlib import Path
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.38 Iterative Protected-Repair Partial Commit Sleep"
+        description="LLM_SEM v0.10.39 Pairwise Consolidation Partial Commit Sleep"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -86,8 +86,8 @@ def save_step_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.38",
-                "mode": "one-by-one-iterative-protected-repair",
+                "version": "v0.10.39",
+                "mode": "one-by-one-pairwise-consolidation",
                 "samples": rows,
             },
             ensure_ascii=False,
@@ -127,6 +127,44 @@ def save_repair_dataset(
             {
                 "version": "v0.10.37",
                 "mode": "protected-repair",
+                "samples": rows,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+
+def save_pairwise_dataset(
+    path: Path,
+    target: dict,
+    anchors: list[dict],
+    failing_queries: set[str],
+):
+    rows = []
+
+    for raw in anchors:
+        row = dict(raw)
+        query = str(row.get("query", ""))
+        if query in failing_queries:
+            row["must_train"] = True
+            row["protected"] = False
+        else:
+            row["must_train"] = False
+            row["protected"] = True
+        rows.append(row)
+
+    target_row = dict(target)
+    target_row["must_train"] = True
+    target_row["protected"] = False
+    rows.append(target_row)
+
+    path.write_text(
+        json.dumps(
+            {
+                "version": "v0.10.39",
+                "mode": "pairwise-consolidation",
                 "samples": rows,
             },
             ensure_ascii=False,
@@ -273,7 +311,7 @@ def main():
     new_rows = remaining_new_rows
 
     print("=" * 108)
-    print(" LLM_SEM v0.10.38 Iterative Protected-Repair Partial Commit Sleep")
+    print(" LLM_SEM v0.10.39 Pairwise Consolidation Partial Commit Sleep")
     print("=" * 108)
     print("Source model       :", source)
     print("New training rows  :", len(new_rows))
@@ -722,6 +760,146 @@ def main():
                 if not repair_used:
                     print("TRY REPAIR RESULT: REJECT")
 
+                    # v0.10.39 fallback: jointly train the new target and the
+                    # protected row(s) that conflict with it. This addresses
+                    # persistent interference that repeated one-sided repair
+                    # cannot remove.
+                    pair_dataset = output.with_name(
+                        f"{output.stem}.step{index}.try{attempt_index}.pair.json"
+                    )
+                    pair_candidate = output.with_name(
+                        f"{output.stem}.step{index}.try{attempt_index}.pair{output.suffix}"
+                    )
+                    pair_train_json = output.with_name(
+                        f"{output.stem}.step{index}.try{attempt_index}.pair.train.json"
+                    )
+                    pair_runtime_json = output.with_name(
+                        f"{output.stem}.step{index}.try{attempt_index}.pair.runtime.json"
+                    )
+
+                    save_pairwise_dataset(
+                        pair_dataset,
+                        target,
+                        anchors,
+                        failing_queries,
+                    )
+
+                    print(
+                        "TRY PAIRWISE: jointly consolidating target + "
+                        + ", ".join(sorted(failing_queries))
+                    )
+
+                    pair_cmd = [
+                        sys.executable,
+                        "semantic_guided_answer_finetune_v097.py",
+                        "--model", str(current_source),
+                        "--tokenizer", args.tokenizer,
+                        "--dataset", str(pair_dataset),
+                        "--benchmark", args.benchmark,
+                        "--output", str(pair_candidate),
+                        "--epochs", "180",
+                        "--learning-rate", str(args.learning_rate * 0.50),
+                        "--lm-head-lr", str(args.lm_head_lr * 0.50),
+                        "--preserve-weight", str(args.preserve_weight),
+                        "--train-blocks", str(args.train_blocks),
+                        "--protected-distill-weight", "4.0",
+                        "--new-knowledge-weight", "4.0",
+                        "--min-generation-sim", "0.0",
+                        "--result-json", str(pair_train_json),
+                        "--prefer-final-state",
+                        "--concept-balanced",
+                    ]
+                    if args.allow_cpu:
+                        pair_cmd.append("--allow-cpu")
+
+                    if run(pair_cmd) == 0:
+                        _, pair_metrics = runtime_result(
+                            source=current_source,
+                            candidate=pair_candidate,
+                            full_dataset=args.full_dataset,
+                            benchmark=args.benchmark,
+                            tokenizer=args.tokenizer,
+                            result_json=pair_runtime_json,
+                            allow_cpu=args.allow_cpu,
+                        )
+
+                        pair_target = find_detail(pair_metrics, query)
+                        pair_protected_failures = []
+                        pair_max_drop = 0.0
+                        pair_min_pair = 1.0
+
+                        for item in pair_metrics.get("details", []):
+                            q = str(item.get("query", ""))
+                            if q not in anchor_queries:
+                                continue
+                            before = float(
+                                item.get("source_canonical_similarity", 0.0)
+                            )
+                            after = float(
+                                item.get("candidate_canonical_similarity", 0.0)
+                            )
+                            drop = before - after
+                            pair = float(
+                                item.get("source_candidate_similarity", 0.0)
+                            )
+                            pair_max_drop = max(pair_max_drop, drop)
+                            pair_min_pair = min(pair_min_pair, pair)
+                            if (
+                                drop > args.max_protected_drop
+                                or pair < 0.70
+                            ):
+                                pair_protected_failures.append({
+                                    "query": q,
+                                    "drop": drop,
+                                    "pair": pair,
+                                })
+
+                        if pair_target is not None:
+                            pair_target_after = float(
+                                pair_target.get(
+                                    "candidate_canonical_similarity",
+                                    0.0,
+                                )
+                            )
+                            pair_gain = pair_target_after - target_before
+                        else:
+                            pair_target_after = 0.0
+                            pair_gain = -1.0
+
+                        pair_target_ok = (
+                            pair_target_after >= args.min_target_sim
+                            or pair_gain >= args.min_progress_gain
+                        )
+                        pair_protected_ok = not pair_protected_failures
+
+                        print(
+                            "TRY PAIRWISE TARGET: "
+                            f"{target_before:.6f}->{pair_target_after:.6f} "
+                            f"gain={pair_gain:+.6f}"
+                        )
+                        print(
+                            "TRY PAIRWISE PROTECTION: "
+                            f"failures={len(pair_protected_failures)} "
+                            f"max_drop={pair_max_drop:+.6f} "
+                            f"min_pair={pair_min_pair:.6f}"
+                        )
+
+                        if pair_target_ok and pair_protected_ok:
+                            print("TRY PAIRWISE RESULT: SAFE")
+                            target_after = pair_target_after
+                            target_gain = pair_gain
+                            protected_failures = []
+                            max_drop = pair_max_drop
+                            min_pair = pair_min_pair
+                            protected_ok = True
+                            repair_used = True
+                            repair_round_used = -1
+                            selected_candidate = pair_candidate
+                        else:
+                            print("TRY PAIRWISE RESULT: REJECT")
+                    else:
+                        print("TRY PAIRWISE RESULT: TRAINING FAILURE")
+
             if not (target_ok and protected_ok):
                 print("TRY RESULT: REJECT")
                 continue
@@ -798,6 +976,7 @@ def main():
                 "param_delta_rel": float(best["param_delta_rel"]),
                 "repair_used": bool(best.get("repair_used", False)),
                 "repair_round": int(best.get("repair_round", 0)),
+                "pairwise_used": int(best.get("repair_round", 0)) == -1,
             })
         else:
             print()
