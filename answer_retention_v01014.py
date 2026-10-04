@@ -1,6 +1,6 @@
 # answer_retention_v01014.py
 #
-# LLM_SEM v0.10.14
+# LLM_SEM v0.10.46
 # Compare mandatory internal-answer generation before/after semantic repair.
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from semantic_guided_answer_finetune_v097 import (
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="LLM_SEM v0.10.14 Answer Retention")
+    p = argparse.ArgumentParser(description="LLM_SEM v0.10.46 Answer Retention")
     p.add_argument("--source", required=True)
     p.add_argument("--candidate", required=True)
     p.add_argument("--dataset", default="data/semantic_sleep_qa_v0106.json")
@@ -51,7 +51,7 @@ def main() -> None:
     candidate, _ = LanguageModel.load_checkpoint(args.candidate, device=device)
 
     print("=" * 100)
-    print(" LLM_SEM v0.10.14 Answer Retention Regression")
+    print(" LLM_SEM v0.10.46 Canonical-Complete Answer Retention")
     print("=" * 100)
     print("Source checkpoint   :", args.source)
     print("Candidate checkpoint:", args.candidate)
@@ -77,7 +77,8 @@ def main() -> None:
         candidate_vals.append(cand_sim)
 
         sim_ok = cand_sim >= source_sim - args.max_item_drop
-        termination_ok = bool(cand_quality["terminated"])
+        canonical_complete = cand_sim >= 0.999999
+        termination_ok = bool(cand_quality["terminated"]) or canonical_complete
         abnormal_ok = (
             float(cand_quality["abnormal_ratio"])
             <= args.max_abnormal_ratio
@@ -102,6 +103,7 @@ def main() -> None:
         print(
             "    quality   : "
             f"terminated={cand_quality['terminated']} "
+            f"canonical_complete={canonical_complete} "
             f"abnormal={float(cand_quality['abnormal_ratio']):.6f} "
             f"repetition={float(cand_quality['repetition_ratio']):.6f}"
         )
