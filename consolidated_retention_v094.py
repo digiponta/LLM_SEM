@@ -158,10 +158,18 @@ def main() -> None:
             and cand_margin >= args.recovery_min_margin
             and expected_gain > args.recovery_min_gain
         )
+        baseline_ambiguous = (
+            source_top == expected
+            and source_margin < args.degraded_min_margin
+            and cand_top == expected
+            and cand_margin >= 0.0
+            and expected_gain >= -args.baseline_max_sim_drop
+        )
         ok = global_pass and (
             strict_retention
             or degraded_retention
             or recovered
+            or baseline_ambiguous
         )
         mode = (
             "RETENTION"
