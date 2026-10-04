@@ -403,6 +403,7 @@ class LanguageModel(nn.Module):
         temperature: float = 0.8,
         top_k: Optional[int] = 40,
         repetition_penalty: float = 1.15,
+        penalize_prompt: bool = False,
     ) -> List[int]:
         if not token_ids:
             raise ValueError("token_ids must not be empty.")
@@ -412,6 +413,7 @@ class LanguageModel(nn.Module):
         self.eval()
         device = next(self.parameters()).device
         generated = list(token_ids)
+        prompt_length = len(generated)
 
         for _ in range(max_new_tokens):
             context = generated[-self.context_length:]
@@ -424,7 +426,12 @@ class LanguageModel(nn.Module):
             logits = self(x)[0, -1, :].clone()
 
             if repetition_penalty != 1.0:
-                for token_id in set(generated):
+                penalty_history = (
+                    generated
+                    if penalize_prompt
+                    else generated[prompt_length:]
+                )
+                for token_id in set(penalty_history):
                     if 0 <= token_id < logits.numel():
                         if logits[token_id] >= 0:
                             logits[token_id] /= repetition_penalty
