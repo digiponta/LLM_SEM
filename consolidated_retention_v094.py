@@ -95,7 +95,7 @@ def main() -> None:
     global_pass = loo_drop <= args.max_loo_drop
 
     print("=" * 100)
-    print(" LLM_SEM v0.10.10 Retention / Degraded / Recovery Regression")
+    print(" LLM_SEM v0.10.45 Baseline-Aware Retention Regression")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
@@ -177,7 +177,11 @@ def main() -> None:
             else (
                 "DEGRADED"
                 if degraded_retention
-                else ("RECOVERY" if recovered else "FAIL")
+                else (
+                    "RECOVERY"
+                    if recovered
+                    else ("BASELINE" if baseline_ambiguous else "FAIL")
+                )
             )
         )
 
