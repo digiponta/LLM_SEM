@@ -201,7 +201,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.49 Anchor-Target Validation")
+    print(" LLM_SEM v0.10.50 Proposition-Decomposed Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -354,14 +354,14 @@ def main() -> None:
             )
             bootstrap_cmd = [
                 sys.executable,
-                "concept_bootstrap_v01048.py",
+                "proposition_bootstrap_v01050.py",
                 "--source", str(current_source),
                 "--incremental-dataset", str(qa_dataset_path),
                 "--full-dataset", args.sleep_dataset,
                 "--benchmark", args.benchmark,
                 "--tokenizer", args.tokenizer,
                 "--output", str(bootstrap_candidate),
-                "--anchor-epochs", "120",
+                "--proposition-epochs", "140",
                 "--full-epochs", "180",
                 "--learning-rate", str(
                     args.qa_learning_rate * args.incremental_lr_scale
@@ -372,7 +372,7 @@ def main() -> None:
                 "--preserve-weight", str(args.qa_preserve_weight),
                 "--protected-distill-weight",
                 str(max(4.0, args.incremental_distill_weight * 0.5)),
-                "--anchor-weight", "8.0",
+                "--proposition-weight", "8.0",
                 "--full-weight", "6.0",
                 "--train-blocks", str(args.incremental_train_blocks),
             ]
@@ -381,23 +381,23 @@ def main() -> None:
 
             bootstrap_code = run_step_code(
                 bootstrap_cmd,
-                "concept-level bootstrap for unseen knowledge",
+                "proposition-decomposed bootstrap for unseen knowledge",
             )
             if bootstrap_code == 0:
                 current_source = bootstrap_candidate
                 print(
-                    "SLEEP> concept bootstrap made safe progress; "
+                    "SLEEP> proposition bootstrap made safe progress; "
                     "one-by-one refinement starts from:",
                     current_source,
                 )
             elif bootstrap_code == 2:
                 print(
-                    "SLEEP> concept bootstrap found no safe progress; "
+                    "SLEEP> proposition bootstrap found no safe progress; "
                     "falling back to original one-by-one source."
                 )
             else:
                 raise RuntimeError(
-                    "concept bootstrap failed with exit code "
+                    "proposition bootstrap failed with exit code "
                     f"{bootstrap_code}"
                 )
 
@@ -489,7 +489,7 @@ def main() -> None:
                     "--manifest", args.manifest,
                     "--retention-pass",
                     "--note",
-                    "v0.10.49 ANCHOR-TARGET PARTIAL commit",
+                    "v0.10.50 PROPOSITION-DECOMPOSED PARTIAL commit",
                 ]
                 if args.allow_cpu:
                     partial_promote_cmd.append("--allow-cpu")
@@ -923,7 +923,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.49 complete anchor-target validation",
+        "--note", "v0.10.50 complete proposition-decomposed retention",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
