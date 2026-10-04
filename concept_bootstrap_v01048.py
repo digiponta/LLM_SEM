@@ -8,10 +8,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+import torch
+
+from model import LanguageModel
+from runtime_answer_retention_v01015 import ratio, runtime_generate
+from semantic_eval import load_benchmark
+from semantic_router import SemanticRouter
+from tokenizer import Tokenizer
+
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.48 Anchor-First Concept Bootstrap"
+        description="LLM_SEM v0.10.49 Anchor-Target Validation"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -122,7 +130,7 @@ def save_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.48",
+                "version": "v0.10.49",
                 "mode": mode,
                 "samples": rows,
             },
@@ -202,11 +210,56 @@ def concept_mean(metrics: dict, queries: set[str], field: str) -> float:
     return sum(vals) / len(vals) if vals else 0.0
 
 
+def tokenizer_unknown_chars(tokenizer: Tokenizer, text: str) -> list[str]:
+    return sorted({
+        ch for ch in str(text)
+        if tokenizer.token_to_id.get(ch, tokenizer.unk_id) == tokenizer.unk_id
+    })
+
+
+@torch.no_grad()
+def runtime_target_mean(
+    *,
+    model_path: Path,
+    tokenizer_path: str,
+    benchmark_path: str,
+    alpha: float,
+    targets: list[dict],
+    expected_answer: str,
+    device: torch.device,
+) -> tuple[float, list[tuple[str, float, str]]]:
+    tokenizer = Tokenizer.load(tokenizer_path)
+    model, _ = LanguageModel.load_checkpoint(model_path, device=device)
+    benchmark = load_benchmark(benchmark_path)
+    router = SemanticRouter(model, tokenizer, alpha=alpha)
+    router.fit(benchmark)
+
+    vals = []
+    details = []
+    for row in targets:
+        query = str(row.get("query", ""))
+        generated, _, _ = runtime_generate(
+            model,
+            tokenizer,
+            router,
+            query,
+        )
+        sim = ratio(generated, expected_answer)
+        vals.append(sim)
+        details.append((query, sim, generated))
+
+    return (
+        sum(vals) / len(vals) if vals else 0.0,
+        details,
+    )
+
+
 def main():
     args = parse_args()
     source = Path(args.source)
     output = Path(args.output)
     rows = load_samples(Path(args.incremental_dataset))
+    tokenizer = Tokenizer.load(args.tokenizer)
 
     mandatory = [x for x in rows if bool(x.get("must_train", False))]
     protected = [x for x in rows if bool(x.get("protected", False))]
@@ -243,6 +296,10 @@ def main():
             max_chars=max(16, int(args.anchor_max_chars)),
         )
         queries = {str(x.get("query", "")) for x in targets}
+        unknown = tokenizer_unknown_chars(
+            tokenizer,
+            concept + canonical + "\n".join(queries),
+        )
 
         print()
         print("-" * 108)
@@ -250,6 +307,14 @@ def main():
         print("Canonical chars :", len(canonical))
         print("Anchor chars    :", len(anchor))
         print("Anchor          :", anchor)
+        print("Tokenizer UNK   :", unknown or "(none)")
+
+        if unknown:
+            print(
+                "CONCEPT RESULT: SKIP - tokenizer cannot represent "
+                + ", ".join(repr(ch) for ch in unknown)
+            )
+            continue
 
         anchor_dataset = output.with_name(
             f"{output.stem}.anchor{index}.json"
@@ -290,28 +355,42 @@ def main():
             anchor_candidate,
             anchor_runtime_json,
         )
-        # Runtime validator still compares against the full canonical target.
-        # Even a small positive movement proves that the new concept identity
-        # reached generation and is therefore a useful bootstrap source.
-        anchor_before = concept_mean(
-            anchor_metrics,
-            queries,
-            "source_canonical_similarity",
-        )
-        anchor_after = concept_mean(
-            anchor_metrics,
-            queries,
-            "candidate_canonical_similarity",
-        )
-        anchor_gain = anchor_after - anchor_before
         anchor_safe = int(anchor_metrics.get("known_failures", 10**9)) == 0
 
+        device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+        source_anchor_mean, _ = runtime_target_mean(
+            model_path=current,
+            tokenizer_path=args.tokenizer,
+            benchmark_path=args.benchmark,
+            alpha=0.35,
+            targets=targets,
+            expected_answer=anchor,
+            device=device,
+        )
+        candidate_anchor_mean, anchor_details = runtime_target_mean(
+            model_path=anchor_candidate,
+            tokenizer_path=args.tokenizer,
+            benchmark_path=args.benchmark,
+            alpha=0.35,
+            targets=targets,
+            expected_answer=anchor,
+            device=device,
+        )
+        anchor_gain = candidate_anchor_mean - source_anchor_mean
+
         print(
-            "ANCHOR RUNTIME: "
-            f"{anchor_before:.6f}->{anchor_after:.6f} "
+            "ANCHOR TARGET: "
+            f"{source_anchor_mean:.6f}->{candidate_anchor_mean:.6f} "
             f"gain={anchor_gain:+.6f} "
             f"known_failures={anchor_metrics.get('known_failures')}"
         )
+        for query, sim, generated in anchor_details:
+            print(
+                f"  anchor query={query!r} sim={sim:.6f} "
+                f"generated={generated}"
+            )
 
         if not (anchor_safe and anchor_gain >= args.min_anchor_gain):
             print("ANCHOR RESULT: REJECT")
