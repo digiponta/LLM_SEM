@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.42 Core Audit Fixes
+# LLM_SEM v0.10.43 Internal-Probe Consistency
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -115,8 +115,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sleep-dataset", default="data/semantic_sleep_qa_v0106.json")
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument("--answer-gate-min-score", type=float, default=12.0)
-    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0142.pt")
-    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0142.pt")
+    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0143.pt")
+    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0143.pt")
     p.add_argument("--sleep-qa-epochs", type=int, default=240)
     p.add_argument("--sleep-epochs", type=int, default=80)
     p.add_argument("--sleep-max-rounds", type=int, default=5)
@@ -583,6 +583,45 @@ def generate_answer(
     return full.strip() or "(generation produced no visible tokens)", mode
 
 
+def generate_internal_probe(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    text: str,
+    *,
+    selected_label: str,
+    intent: str | None,
+    concepts: list[str] | None,
+) -> tuple[str, str]:
+    """Deterministic /internal generation matching retention validators."""
+    prompt = build_semantic_generation_prompt(
+        text,
+        selected_label=selected_label,
+        gate="INTERNAL_PROBE",
+        intent=intent,
+        concepts=concepts,
+        truth_record=None,
+    )
+    prompt_ids = tokenizer.encode(
+        prompt,
+        add_bos=True,
+        add_eos=False,
+    )
+    generated = model.generate(
+        prompt_ids,
+        max_new_tokens=96,
+        eos_id=tokenizer.eos_id,
+        temperature=0.2,
+        top_k=1,
+        repetition_penalty=1.10,
+    )
+    continuation = generated[len(prompt_ids):]
+    answer = tokenizer.decode(
+        continuation,
+        skip_special_tokens=True,
+    ).strip()
+    return stabilize_runtime_answer(answer), "internal-deterministic"
+
+
 def resolve_runtime_model(args: argparse.Namespace) -> str:
     if args.model:
         return args.model
@@ -669,7 +708,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.42 Core Audit Fixes")
+    print(" LLM_SEM v0.10.43 Internal-Probe Consistency")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -712,7 +751,7 @@ def main() -> None:
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.42 runtime policy")
+    print("  /runtime              show v0.10.43 runtime policy")
     print("  /quit")
     print()
 
@@ -768,16 +807,13 @@ def main() -> None:
                 props_internal,
             )
 
-            answer_internal, generation_mode = generate_answer(
+            answer_internal, generation_mode = generate_internal_probe(
                 model,
                 tokenizer,
                 probe_text,
-                args,
                 selected_label=top.label,
-                gate="INTERNAL_PROBE",
                 intent=extracted_internal.intent,
                 concepts=concepts_internal,
-                truth_record=None,
             )
 
             print(
@@ -952,7 +988,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.10.42 Core Audit Fixes")
+            print("Runtime        : LLM_SEM v0.10.43 Internal-Probe Consistency")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
