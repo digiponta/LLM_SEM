@@ -1,6 +1,6 @@
 # chat.py
 #
-# LLM_SEM v0.10.44 Batched Sleep Optimization
+# LLM_SEM v0.10.45 Baseline-Aware Retention
 #
 # Integrates adaptive learning, Semantic Data v2.0, structural
 # relation/proposition extraction, and the v0.4.6 local-evidence
@@ -115,8 +115,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sleep-dataset", default="data/semantic_sleep_qa_v0106.json")
     p.add_argument("--answer-memory-min-score", type=float, default=7.0)
     p.add_argument("--answer-gate-min-score", type=float, default=12.0)
-    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0144.pt")
-    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0144.pt")
+    p.add_argument("--sleep-candidate", default="model/model-sem-sleep-v0145.pt")
+    p.add_argument("--sleep-semantic-candidate", default="model/model-sem-sleep-sem-v0145.pt")
     p.add_argument("--sleep-qa-epochs", type=int, default=240)
     p.add_argument("--sleep-epochs", type=int, default=80)
     p.add_argument("--sleep-max-rounds", type=int, default=5)
@@ -708,7 +708,7 @@ def main() -> None:
 
     print()
     print("============================================================")
-    print(" LLM_SEM v0.10.44 Batched Sleep Optimization")
+    print(" LLM_SEM v0.10.45 Baseline-Aware Retention")
     print("============================================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -751,7 +751,7 @@ def main() -> None:
     print("  /teach-answer <text> persist a trusted answer for the previous utterance")
     print("  /truth <STATE>       mark previous utterance TRUE/FALSE/UNVERIFIED/CONTESTED/OUTDATED")
     print("  /memory               show adaptive sample count")
-    print("  /runtime              show v0.10.44 runtime policy")
+    print("  /runtime              show v0.10.45 runtime policy")
     print("  /quit")
     print()
 
@@ -988,7 +988,7 @@ def main() -> None:
             continue
 
         if text == "/runtime":
-            print("Runtime        : LLM_SEM v0.10.44 Batched Sleep Optimization")
+            print("Runtime        : LLM_SEM v0.10.45 Baseline-Aware Retention")
             print("Base router    : FIXED benchmark router")
             print("Adaptive memory: multi-prototype + local evidence")
             print(
