@@ -201,7 +201,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.46 Validator Consistency")
+    print(" LLM_SEM v0.10.47 Concept Bootstrap")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -349,6 +349,56 @@ def main() -> None:
             )
 
         if incremental_mode and not completed:
+            bootstrap_candidate = final_candidate.with_name(
+                f"{final_candidate.stem}.bootstrap{final_candidate.suffix}"
+            )
+            bootstrap_cmd = [
+                sys.executable,
+                "concept_bootstrap_v01047.py",
+                "--source", str(current_source),
+                "--incremental-dataset", str(qa_dataset_path),
+                "--full-dataset", args.sleep_dataset,
+                "--benchmark", args.benchmark,
+                "--tokenizer", args.tokenizer,
+                "--output", str(bootstrap_candidate),
+                "--epochs", "180",
+                "--learning-rate", str(
+                    args.qa_learning_rate * args.incremental_lr_scale
+                ),
+                "--lm-head-lr", str(
+                    args.qa_lm_head_lr * args.incremental_lr_scale
+                ),
+                "--preserve-weight", str(args.qa_preserve_weight),
+                "--protected-distill-weight",
+                str(max(4.0, args.incremental_distill_weight * 0.5)),
+                "--new-knowledge-weight", "6.0",
+                "--train-blocks", str(args.incremental_train_blocks),
+            ]
+            if args.allow_cpu:
+                bootstrap_cmd.append("--allow-cpu")
+
+            bootstrap_code = run_step_code(
+                bootstrap_cmd,
+                "concept-level bootstrap for unseen knowledge",
+            )
+            if bootstrap_code == 0:
+                current_source = bootstrap_candidate
+                print(
+                    "SLEEP> concept bootstrap made safe progress; "
+                    "one-by-one refinement starts from:",
+                    current_source,
+                )
+            elif bootstrap_code == 2:
+                print(
+                    "SLEEP> concept bootstrap found no safe progress; "
+                    "falling back to original one-by-one source."
+                )
+            else:
+                raise RuntimeError(
+                    "concept bootstrap failed with exit code "
+                    f"{bootstrap_code}"
+                )
+
             one_by_one_candidate = final_candidate.with_name(
                 f"{final_candidate.stem}.onebyone{final_candidate.suffix}"
             )
@@ -437,7 +487,7 @@ def main() -> None:
                     "--manifest", args.manifest,
                     "--retention-pass",
                     "--note",
-                    "v0.10.46 VALIDATOR-CONSISTENT PARTIAL commit",
+                    "v0.10.47 CONCEPT-BOOTSTRAP PARTIAL commit",
                 ]
                 if args.allow_cpu:
                     partial_promote_cmd.append("--allow-cpu")
@@ -871,7 +921,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.46 complete validator-consistent retention",
+        "--note", "v0.10.47 complete concept-bootstrap retention",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
