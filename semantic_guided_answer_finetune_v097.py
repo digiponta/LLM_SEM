@@ -240,35 +240,64 @@ def build_prompt(row: dict) -> str:
     )
 
 
+def context_window_answer_loss(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    prompt: str,
+    answer: str,
+    device: torch.device,
+) -> torch.Tensor:
+    """Teacher-force answer tokens with the same context window as generate().
+
+    model.generate() keeps only the last model.context_length tokens before
+    predicting each next token. Training must use the same visible prefix;
+    otherwise NLL can improve using tokens that runtime generation never sees.
+    """
+    prompt_ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
+    answer_ids = tokenizer.encode(answer, add_bos=False, add_eos=True)
+    full = prompt_ids + answer_ids
+
+    losses = []
+    first_target = len(prompt_ids)
+    context_length = max(1, int(model.context_length))
+
+    for target_pos in range(first_target, len(full)):
+        start = max(0, target_pos - context_length)
+        prefix = full[start:target_pos]
+        if not prefix:
+            continue
+
+        x = torch.tensor(
+            [prefix],
+            dtype=torch.long,
+            device=device,
+        )
+        target = torch.tensor(
+            [full[target_pos]],
+            dtype=torch.long,
+            device=device,
+        )
+        logits = model(x)[0, -1, :].unsqueeze(0)
+        losses.append(F.cross_entropy(logits, target))
+
+    if not losses:
+        return torch.tensor(0.0, device=device, requires_grad=True)
+    return torch.stack(losses).mean()
+
+
 def answer_lm_loss(
     model: LanguageModel,
     tokenizer: Tokenizer,
     row: dict,
     device: torch.device,
 ) -> torch.Tensor:
-    prompt = build_prompt(row)
-    answer = row["answer"]
-
-    prompt_ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
-    answer_ids = tokenizer.encode(answer, add_bos=False, add_eos=True)
-    full = prompt_ids + answer_ids
-
-    x = torch.tensor([full[:-1]], dtype=torch.long, device=device)
-    y = torch.tensor([full[1:]], dtype=torch.long, device=device)
-    logits = model(x)
-
-    token_loss = F.cross_entropy(
-        logits.reshape(-1, logits.size(-1)),
-        y.reshape(-1),
-        reduction="none",
-    ).view(1, -1)
-
-    # Predictions whose target token belongs to the answer region.
-    first_answer_target = max(0, len(prompt_ids) - 1)
-    mask = torch.zeros_like(token_loss)
-    mask[:, first_answer_target:] = 1.0
-    denom = mask.sum().clamp_min(1.0)
-    return (token_loss * mask).sum() / denom
+    return context_window_answer_loss(
+        model,
+        tokenizer,
+        build_prompt(row),
+        str(row["answer"]),
+        device,
+    )
 
 
 
@@ -435,36 +464,15 @@ def protected_distillation_loss(
     replay_row: dict,
     device: torch.device,
 ) -> torch.Tensor:
-    # v0.10.31 Canonical Replay Protection:
-    # keep the exact runtime /internal prompt, but supervise the student with
-    # the trusted canonical answer rather than copying the source model's
-    # possibly malformed generated text.
-    prompt = str(replay_row["prompt"])
-    canonical_answer = str(replay_row["answer"])
-
-    prompt_ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
-    answer_ids = tokenizer.encode(
-        canonical_answer,
-        add_bos=False,
-        add_eos=True,
+    # Keep the exact runtime /internal prompt and the trusted canonical answer.
+    # Use the same rolling context window as runtime generation.
+    return context_window_answer_loss(
+        student,
+        tokenizer,
+        str(replay_row["prompt"]),
+        str(replay_row["answer"]),
+        device,
     )
-    full = prompt_ids + answer_ids
-
-    x = torch.tensor([full[:-1]], dtype=torch.long, device=device)
-    y = torch.tensor([full[1:]], dtype=torch.long, device=device)
-    logits = student(x)
-
-    token_loss = F.cross_entropy(
-        logits.reshape(-1, logits.size(-1)),
-        y.reshape(-1),
-        reduction="none",
-    ).view(1, -1)
-
-    first_answer_target = max(0, len(prompt_ids) - 1)
-    mask = torch.zeros_like(token_loss)
-    mask[:, first_answer_target:] = 1.0
-    denom = mask.sum().clamp_min(1.0)
-    return (token_loss * mask).sum() / denom
 
 def semantic_vector_grad(
     model: LanguageModel,
@@ -689,7 +697,7 @@ def main() -> None:
     )
 
     print("=" * 100)
-    print(" LLM_SEM v0.10.36 Latent-Progress Diagnostic Fine-Tuning")
+    print(" LLM_SEM v0.10.40 Context-Aligned Fine-Tuning")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
@@ -713,6 +721,8 @@ def main() -> None:
     print("New knowledge weight:", args.new_knowledge_weight)
     print("Runtime replay rows :", len(runtime_replay_rows))
     print("Runtime-aligned NEW :", len(runtime_aligned_new_rows))
+    print("LM context length    :", student.context_length)
+    print("Teacher-force window :", "MATCHES generate()")
     print("Before train QA NLL :", f"{before_train:.6f}")
     print("Before holdout NLL  :", f"{before_test:.6f}")
     print()
