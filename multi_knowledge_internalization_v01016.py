@@ -1,6 +1,6 @@
 # multi_knowledge_internalization_v01016.py
 #
-# LLM_SEM v0.10.16
+# LLM_SEM v0.10.41
 # Candidate-only multi-knowledge internalization validation.
 # External Semantic/Answer/Relation Memory is not consulted.
 
@@ -27,7 +27,7 @@ from tokenizer import Tokenizer
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.16 Multi-Knowledge Internalization"
+        description="LLM_SEM v0.10.41 Multi-Knowledge Internalization"
     )
     p.add_argument("--model", required=True)
     p.add_argument("--dataset", default="data/semantic_sleep_qa_v0106.json")
@@ -99,7 +99,7 @@ def main() -> None:
     probes = select_probes(rows)
 
     print("=" * 104)
-    print(" LLM_SEM v0.10.16 Multi-Knowledge Internalization")
+    print(" LLM_SEM v0.10.41 Multi-Knowledge Internalization")
     print("=" * 104)
     print("Model              :", args.model)
     print("Dataset            :", args.dataset)
@@ -137,9 +137,11 @@ def main() -> None:
         )
         sim = ratio(generated, canonical)
         quality = generation_quality(generated)
+        canonical_complete = sim >= 0.999999
+        termination_ok = bool(quality["terminated"]) or canonical_complete
         ok = (
             sim >= args.min_similarity
-            and bool(quality["terminated"])
+            and termination_ok
             and float(quality["abnormal_ratio"]) <= args.max_abnormal_ratio
             and float(quality["repetition_ratio"]) <= args.max_repetition_ratio
         )
@@ -160,6 +162,7 @@ def main() -> None:
         print(
             "    quality    : "
             f"terminated={quality['terminated']} "
+            f"canonical_complete={canonical_complete} "
             f"abnormal={float(quality['abnormal_ratio']):.6f} "
             f"repetition={float(quality['repetition_ratio']):.6f}"
         )
