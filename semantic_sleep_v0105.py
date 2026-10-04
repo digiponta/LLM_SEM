@@ -201,7 +201,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.48 Anchor-First Concept Bootstrap")
+    print(" LLM_SEM v0.10.49 Anchor-Target Validation")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -489,7 +489,7 @@ def main() -> None:
                     "--manifest", args.manifest,
                     "--retention-pass",
                     "--note",
-                    "v0.10.47 CONCEPT-BOOTSTRAP PARTIAL commit",
+                    "v0.10.49 ANCHOR-TARGET PARTIAL commit",
                 ]
                 if args.allow_cpu:
                     partial_promote_cmd.append("--allow-cpu")
@@ -923,7 +923,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.47 complete concept-bootstrap retention",
+        "--note", "v0.10.49 complete anchor-target validation",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
