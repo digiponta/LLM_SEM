@@ -1,6 +1,6 @@
 # one_by_one_sleep_v01030.py
 #
-# LLM_SEM v0.10.37
+# LLM_SEM v0.10.38
 # Learn exactly one new QA row at a time.
 # After each row:
 #   - protect previously known/accepted rows with runtime replay,
@@ -21,7 +21,7 @@ from pathlib import Path
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.37 Protected-Repair Partial Commit Sleep"
+        description="LLM_SEM v0.10.38 Iterative Protected-Repair Partial Commit Sleep"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -43,6 +43,7 @@ def parse_args():
     p.add_argument("--min-target-nll-drop", type=float, default=0.05)
     p.add_argument("--min-target-nll-rel-drop", type=float, default=0.05)
     p.add_argument("--max-protected-drop", type=float, default=0.05)
+    p.add_argument("--max-repair-rounds", type=int, default=4)
     p.add_argument("--allow-cpu", action="store_true")
     return p.parse_args()
 
@@ -85,8 +86,8 @@ def save_step_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.37",
-                "mode": "one-by-one-protected-repair-partial-commit",
+                "version": "v0.10.38",
+                "mode": "one-by-one-iterative-protected-repair",
                 "samples": rows,
             },
             ensure_ascii=False,
@@ -272,7 +273,7 @@ def main():
     new_rows = remaining_new_rows
 
     print("=" * 108)
-    print(" LLM_SEM v0.10.37 Protected-Repair Partial Commit Sleep")
+    print(" LLM_SEM v0.10.38 Iterative Protected-Repair Partial Commit Sleep")
     print("=" * 108)
     print("Source model       :", source)
     print("New training rows  :", len(new_rows))
@@ -284,6 +285,7 @@ def main():
     print("Epochs / row       :", args.epochs)
     print("Replay weight      :", args.replay_weight)
     print("New knowledge wt   :", args.new_weight)
+    print("Max repair rounds  :", args.max_repair_rounds)
     print()
 
     if not new_rows:
@@ -530,24 +532,6 @@ def main():
                     str(item["query"])
                     for item in protected_failures
                 }
-                repair_dataset = output.with_name(
-                    f"{output.stem}.step{index}.try{attempt_index}.repair.json"
-                )
-                repair_candidate = output.with_name(
-                    f"{output.stem}.step{index}.try{attempt_index}.repair{output.suffix}"
-                )
-                repair_train_json = output.with_name(
-                    f"{output.stem}.step{index}.try{attempt_index}.repair.train.json"
-                )
-                repair_runtime_json = output.with_name(
-                    f"{output.stem}.step{index}.try{attempt_index}.repair.runtime.json"
-                )
-                save_repair_dataset(
-                    repair_dataset,
-                    target,
-                    anchors,
-                    failing_queries,
-                )
 
                 print(
                     "TRY REPAIR: protected regression detected; "
@@ -555,30 +539,81 @@ def main():
                     + ", ".join(sorted(failing_queries))
                 )
 
-                repair_cmd = [
-                    sys.executable,
-                    "semantic_guided_answer_finetune_v097.py",
-                    "--model", str(attempt_candidate),
-                    "--tokenizer", args.tokenizer,
-                    "--dataset", str(repair_dataset),
-                    "--benchmark", args.benchmark,
-                    "--output", str(repair_candidate),
-                    "--epochs", "60",
-                    "--learning-rate", str(args.learning_rate * 0.25),
-                    "--lm-head-lr", str(args.lm_head_lr * 0.25),
-                    "--preserve-weight", str(args.preserve_weight),
-                    "--train-blocks", str(args.train_blocks),
-                    "--protected-distill-weight", "4.0",
-                    "--new-knowledge-weight", "2.0",
-                    "--min-generation-sim", "0.0",
-                    "--result-json", str(repair_train_json),
-                    "--prefer-final-state",
-                    "--concept-balanced",
-                ]
-                if args.allow_cpu:
-                    repair_cmd.append("--allow-cpu")
+                repair_source = attempt_candidate
+                repair_round_used = 0
 
-                if run(repair_cmd) == 0:
+                for repair_round in range(1, max(1, args.max_repair_rounds) + 1):
+                    repair_dataset = output.with_name(
+                        f"{output.stem}.step{index}.try{attempt_index}."
+                        f"repair{repair_round}.json"
+                    )
+                    repair_candidate = output.with_name(
+                        f"{output.stem}.step{index}.try{attempt_index}."
+                        f"repair{repair_round}{output.suffix}"
+                    )
+                    repair_train_json = output.with_name(
+                        f"{output.stem}.step{index}.try{attempt_index}."
+                        f"repair{repair_round}.train.json"
+                    )
+                    repair_runtime_json = output.with_name(
+                        f"{output.stem}.step{index}.try{attempt_index}."
+                        f"repair{repair_round}.runtime.json"
+                    )
+
+                    save_repair_dataset(
+                        repair_dataset,
+                        target,
+                        anchors,
+                        failing_queries,
+                    )
+
+                    # Gradually strengthen repair while keeping the newly
+                    # learned target protected.
+                    repair_epochs = 60
+                    repair_lr_scale = 0.25
+                    repair_replay_weight = 4.0 + 2.0 * (repair_round - 1)
+
+                    print(
+                        f"TRY REPAIR ROUND {repair_round}/{args.max_repair_rounds}: "
+                        f"source={repair_source.name} "
+                        f"replay={repair_replay_weight:.1f}"
+                    )
+
+                    repair_cmd = [
+                        sys.executable,
+                        "semantic_guided_answer_finetune_v097.py",
+                        "--model", str(repair_source),
+                        "--tokenizer", args.tokenizer,
+                        "--dataset", str(repair_dataset),
+                        "--benchmark", args.benchmark,
+                        "--output", str(repair_candidate),
+                        "--epochs", str(repair_epochs),
+                        "--learning-rate", str(
+                            args.learning_rate * repair_lr_scale
+                        ),
+                        "--lm-head-lr", str(
+                            args.lm_head_lr * repair_lr_scale
+                        ),
+                        "--preserve-weight", str(args.preserve_weight),
+                        "--train-blocks", str(args.train_blocks),
+                        "--protected-distill-weight",
+                        str(repair_replay_weight),
+                        "--new-knowledge-weight", "2.0",
+                        "--min-generation-sim", "0.0",
+                        "--result-json", str(repair_train_json),
+                        "--prefer-final-state",
+                        "--concept-balanced",
+                    ]
+                    if args.allow_cpu:
+                        repair_cmd.append("--allow-cpu")
+
+                    if run(repair_cmd) != 0:
+                        print(
+                            f"TRY REPAIR ROUND {repair_round}: "
+                            "TRAINING FAILURE"
+                        )
+                        break
+
                     _, repair_metrics = runtime_result(
                         source=current_source,
                         candidate=repair_candidate,
@@ -627,9 +662,7 @@ def main():
                                 0.0,
                             )
                         )
-                        repaired_gain = (
-                            repaired_target_after - target_before
-                        )
+                        repaired_gain = repaired_target_after - target_before
                     else:
                         repaired_target_after = 0.0
                         repaired_gain = -1.0
@@ -641,19 +674,21 @@ def main():
                     repair_protected_ok = not repair_protected_failures
 
                     print(
-                        "TRY REPAIR TARGET: "
+                        f"TRY REPAIR ROUND {repair_round} TARGET: "
                         f"{target_before:.6f}->{repaired_target_after:.6f} "
                         f"gain={repaired_gain:+.6f}"
                     )
                     print(
-                        "TRY REPAIR PROTECTION: "
+                        f"TRY REPAIR ROUND {repair_round} PROTECTION: "
                         f"failures={len(repair_protected_failures)} "
                         f"max_drop={repair_max_drop:+.6f} "
                         f"min_pair={repair_min_pair:.6f}"
                     )
 
                     if repair_target_ok and repair_protected_ok:
-                        print("TRY REPAIR RESULT: SAFE")
+                        print(
+                            f"TRY REPAIR ROUND {repair_round} RESULT: SAFE"
+                        )
                         target_after = repaired_target_after
                         target_gain = repaired_gain
                         protected_failures = []
@@ -661,11 +696,31 @@ def main():
                         min_pair = repair_min_pair
                         protected_ok = True
                         repair_used = True
+                        repair_round_used = repair_round
                         selected_candidate = repair_candidate
-                    else:
-                        print("TRY REPAIR RESULT: REJECT")
-                else:
-                    print("TRY REPAIR RESULT: TRAINING FAILURE")
+                        break
+
+                    # Continue repairing from the latest candidate only if the
+                    # new target still retains visible progress.
+                    if not repair_target_ok:
+                        print(
+                            f"TRY REPAIR ROUND {repair_round} RESULT: "
+                            "TARGET LOST"
+                        )
+                        break
+
+                    print(
+                        f"TRY REPAIR ROUND {repair_round} RESULT: "
+                        "CONTINUE"
+                    )
+                    repair_source = repair_candidate
+                    failing_queries = {
+                        str(item["query"])
+                        for item in repair_protected_failures
+                    }
+
+                if not repair_used:
+                    print("TRY REPAIR RESULT: REJECT")
 
             if not (target_ok and protected_ok):
                 print("TRY RESULT: REJECT")
@@ -682,6 +737,7 @@ def main():
                     "score": score,
                     "candidate": selected_candidate,
                     "repair_used": repair_used,
+                    "repair_round": repair_round_used,
                     "target_before": target_before,
                     "target_after": target_after,
                     "target_gain": target_gain,
@@ -741,6 +797,7 @@ def main():
                 "target_nll_rel_drop": float(best["target_nll_rel_drop"]),
                 "param_delta_rel": float(best["param_delta_rel"]),
                 "repair_used": bool(best.get("repair_used", False)),
+                "repair_round": int(best.get("repair_round", 0)),
             })
         else:
             print()
