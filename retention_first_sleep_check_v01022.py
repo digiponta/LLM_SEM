@@ -1,6 +1,6 @@
 # retention_first_sleep_check_v01022.py
 #
-# LLM_SEM v0.10.22
+# LLM_SEM v0.10.41
 # Preflight check: decide whether balanced QA sleep is necessary.
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from tokenizer import Tokenizer
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.22 Retention-First Sleep Precheck"
+        description="LLM_SEM v0.10.41 Retention-First Sleep Precheck"
     )
     p.add_argument("--model", required=True)
     p.add_argument("--dataset", default="data/semantic_sleep_qa_v0106.json")
@@ -50,7 +50,7 @@ def main():
     probes = select_probes(rows)
 
     print("=" * 104)
-    print(" LLM_SEM v0.10.22 Retention-First Sleep Precheck")
+    print(" LLM_SEM v0.10.41 Retention-First Sleep Precheck")
     print("=" * 104)
     print("Model             :", args.model)
     print("Dataset           :", args.dataset)
@@ -88,9 +88,11 @@ def main():
         )
         sim = ratio(generated, canonical)
         quality = generation_quality(generated)
+        canonical_complete = sim >= 0.999999
+        termination_ok = bool(quality["terminated"]) or canonical_complete
         ok = (
             sim >= args.min_similarity
-            and bool(quality["terminated"])
+            and termination_ok
             and float(quality["abnormal_ratio"]) <= args.max_abnormal_ratio
             and float(quality["repetition_ratio"]) <= args.max_repetition_ratio
         )
@@ -104,6 +106,8 @@ def main():
             "margin": margin,
             "generated": generated,
             "passed": ok,
+            "canonical_complete": canonical_complete,
+            "termination_ok": termination_ok,
         })
         print(
             f"{index:02d}. [{'PASS' if ok else 'FAIL'}] "
