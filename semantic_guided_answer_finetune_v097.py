@@ -960,13 +960,91 @@ def main() -> None:
         default=0.0,
     )
 
+    # Recompute the objective for the actually selected model state so
+    # checkpoint metadata describes the saved weights rather than the final
+    # training iteration that may have been rolled back.
+    with torch.no_grad():
+        if args.concept_balanced:
+            selected_qa_loss = concept_balanced_qa_loss(
+                student, tokenizer, train_rows, device
+            )
+        else:
+            selected_losses = []
+            selected_weights = []
+            for row in train_rows:
+                selected_losses.append(
+                    answer_lm_loss(student, tokenizer, row, device)
+                )
+                selected_weights.append(
+                    max(0.01, float(row.get("sleep_weight", 1.0)))
+                )
+            selected_qa_loss = (
+                torch.stack([
+                    loss * weight
+                    for loss, weight in zip(
+                        selected_losses, selected_weights
+                    )
+                ]).sum() / sum(selected_weights)
+                if selected_losses
+                else torch.tensor(0.0, device=device)
+            )
+
+        selected_preserve = []
+        for row in benchmark:
+            selected_vec = semantic_vector(
+                student, tokenizer, row.text, device, args.alpha
+            )
+            selected_preserve.append(
+                1.0 - F.cosine_similarity(
+                    selected_vec,
+                    teacher_vectors[row.text],
+                    dim=0,
+                )
+            )
+        selected_preserve_loss = (
+            torch.stack(selected_preserve).mean()
+            if selected_preserve
+            else torch.tensor(0.0, device=device)
+        )
+
+        if runtime_replay_rows and args.protected_distill_weight > 0.0:
+            selected_protected_loss = torch.stack([
+                protected_distillation_loss(
+                    student,
+                    teacher,
+                    tokenizer,
+                    replay_row,
+                    device,
+                )
+                for replay_row in runtime_replay_rows
+            ]).mean()
+        else:
+            selected_protected_loss = torch.tensor(0.0, device=device)
+
+        selected_total = float((
+            args.new_knowledge_weight * selected_qa_loss
+            + args.preserve_weight * selected_preserve_loss
+            + args.protected_distill_weight * selected_protected_loss
+        ).item())
+
+    selected_epoch = (
+        max(1, args.epochs)
+        if args.prefer_final_state or best_state is None
+        else best_epoch
+    )
+    restored_best_state = (
+        not args.prefer_final_state
+        and best_state is not None
+        and selected_epoch != max(1, args.epochs)
+    )
+
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     student.save_checkpoint(
         str(output),
-        optimizer=optimizer,
-        epoch=max(1, args.epochs),
-        loss=last_total,
+        optimizer=None if restored_best_state else optimizer,
+        epoch=selected_epoch,
+        loss=selected_total,
     )
 
     print()
@@ -985,7 +1063,8 @@ def main() -> None:
     print("Maximum abnormal-char ratio    :", f"{abnormal_ratio_max:.6f}")
     print("Maximum repetition ratio       :", f"{repetition_ratio_max:.6f}")
     print("Saved checkpoint:", output)
-    print("Selected epoch  :", best_epoch if best_state is not None else args.epochs)
+    print("Selected epoch  :", selected_epoch)
+    print("Selected objective:", f"{selected_total:.6f}")
     if generation_details:
         print()
         print("Generation probe details")
