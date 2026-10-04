@@ -342,14 +342,23 @@ def truth_allows_answer_memory(
     truth_record: dict | None,
     candidate: AnswerCandidate | None,
 ) -> bool:
-    """Do not silently turn an explicit FALSE/CONTESTED record into a TRUE answer."""
-    if truth_record is None:
-        return True
+    """Reject answer-memory candidates marked unsafe by either truth source."""
+    blocked = {"FALSE", "CONTESTED", "OUTDATED"}
 
-    state = str(truth_record.get("truth_status", "UNVERIFIED")).upper()
-    if state in {"FALSE", "CONTESTED", "OUTDATED"}:
-        return False
+    if candidate is not None:
+        candidate_state = str(
+            candidate.truth_status or "UNVERIFIED"
+        ).upper()
+        if candidate_state in blocked:
+            return False
 
-    # UNVERIFIED is still allowed as a response candidate, but the runtime
-    # retains and displays its explicit warning.
+    if truth_record is not None:
+        state = str(
+            truth_record.get("truth_status", "UNVERIFIED")
+        ).upper()
+        if state in blocked:
+            return False
+
+    # TRUE/UNVERIFIED candidates remain usable. UNVERIFIED still carries
+    # the runtime warning from the semantic truth record when available.
     return True
