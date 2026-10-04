@@ -1,6 +1,6 @@
 # one_by_one_sleep_v01030.py
 #
-# LLM_SEM v0.10.39
+# LLM_SEM v0.10.40
 # Learn exactly one new QA row at a time.
 # After each row:
 #   - protect previously known/accepted rows with runtime replay,
@@ -21,7 +21,7 @@ from pathlib import Path
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.39 Pairwise Consolidation Partial Commit Sleep"
+        description="LLM_SEM v0.10.40 Partial-Resume Bugfix Sleep"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -86,8 +86,8 @@ def save_step_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.39",
-                "mode": "one-by-one-pairwise-consolidation",
+                "version": "v0.10.40",
+                "mode": "one-by-one-partial-resume-bugfix",
                 "samples": rows,
             },
             ensure_ascii=False,
@@ -125,7 +125,7 @@ def save_repair_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.37",
+                "version": "v0.10.40",
                 "mode": "protected-repair",
                 "samples": rows,
             },
@@ -163,7 +163,7 @@ def save_pairwise_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.39",
+                "version": "v0.10.40",
                 "mode": "pairwise-consolidation",
                 "samples": rows,
             },
@@ -294,10 +294,9 @@ def main():
             if detail is not None
             else 0.0
         )
-        if (
-            current_sim >= args.min_target_sim
-            or query in previous_partial_queries
-        ):
+
+        if current_sim >= args.min_target_sim:
+            # Fully learned row: protect it and remove it from future target work.
             recovered = dict(row)
             recovered["must_train"] = False
             recovered["protected"] = True
@@ -305,13 +304,28 @@ def main():
                 protected_rows.append(recovered)
                 protected_query_set.add(query)
             recovered_partial_rows.append(recovered)
-        else:
+            continue
+
+        if query in previous_partial_queries:
+            # PARTIAL row below the target threshold:
+            # - protect it while OTHER rows are trained,
+            # - but keep it in new_rows so its own learning can continue.
+            recovered = dict(row)
+            recovered["must_train"] = False
+            recovered["protected"] = True
+            if query not in protected_query_set:
+                protected_rows.append(recovered)
+                protected_query_set.add(query)
+            recovered_partial_rows.append(recovered)
             remaining_new_rows.append(row)
+            continue
+
+        remaining_new_rows.append(row)
 
     new_rows = remaining_new_rows
 
     print("=" * 108)
-    print(" LLM_SEM v0.10.39 Pairwise Consolidation Partial Commit Sleep")
+    print(" LLM_SEM v0.10.40 Partial-Resume Bugfix Sleep")
     print("=" * 108)
     print("Source model       :", source)
     print("New training rows  :", len(new_rows))
@@ -356,7 +370,11 @@ def main():
             f"{output.stem}.step{index}.runtime.json"
         )
 
-        anchors = protected_rows + accepted_rows
+        anchors = [
+            row
+            for row in (protected_rows + accepted_rows)
+            if str(row.get("query", "")) != query
+        ]
         save_step_dataset(step_dataset, target, anchors)
 
         print()
