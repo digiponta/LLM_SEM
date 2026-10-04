@@ -249,40 +249,57 @@ def context_window_answer_loss(
 ) -> torch.Tensor:
     """Teacher-force answer tokens with the same context window as generate().
 
-    model.generate() keeps only the last model.context_length tokens before
-    predicting each next token. Training must use the same visible prefix;
-    otherwise NLL can improve using tokens that runtime generation never sees.
+    v0.10.44 keeps exact runtime-visible prefixes but batches positions that
+    have the same prefix length. Transformer samples are independent across
+    the batch, so this is mathematically equivalent to the old per-token loop
+    while requiring far fewer forward passes.
     """
     prompt_ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
     answer_ids = tokenizer.encode(answer, add_bos=False, add_eos=True)
     full = prompt_ids + answer_ids
 
-    losses = []
     first_target = len(prompt_ids)
     context_length = max(1, int(model.context_length))
 
+    groups: dict[int, list[tuple[list[int], int]]] = {}
     for target_pos in range(first_target, len(full)):
         start = max(0, target_pos - context_length)
         prefix = full[start:target_pos]
         if not prefix:
             continue
-
-        x = torch.tensor(
-            [prefix],
-            dtype=torch.long,
-            device=device,
+        groups.setdefault(len(prefix), []).append(
+            (prefix, int(full[target_pos]))
         )
-        target = torch.tensor(
-            [full[target_pos]],
-            dtype=torch.long,
-            device=device,
-        )
-        logits = model(x)[0, -1, :].unsqueeze(0)
-        losses.append(F.cross_entropy(logits, target))
 
-    if not losses:
+    if not groups:
         return torch.tensor(0.0, device=device, requires_grad=True)
-    return torch.stack(losses).mean()
+
+    summed_losses = []
+    total_targets = 0
+
+    for items in groups.values():
+        x = torch.tensor(
+            [prefix for prefix, _ in items],
+            dtype=torch.long,
+            device=device,
+        )
+        targets = torch.tensor(
+            [target for _, target in items],
+            dtype=torch.long,
+            device=device,
+        )
+
+        logits = model(x)[:, -1, :]
+        summed_losses.append(
+            F.cross_entropy(
+                logits,
+                targets,
+                reduction="sum",
+            )
+        )
+        total_targets += len(items)
+
+    return torch.stack(summed_losses).sum() / max(1, total_targets)
 
 
 def answer_lm_loss(
@@ -697,7 +714,7 @@ def main() -> None:
     )
 
     print("=" * 100)
-    print(" LLM_SEM v0.10.40 Context-Aligned Fine-Tuning")
+    print(" LLM_SEM v0.10.44 Batched Context-Aligned Fine-Tuning")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
@@ -723,6 +740,7 @@ def main() -> None:
     print("Runtime-aligned NEW :", len(runtime_aligned_new_rows))
     print("LM context length    :", student.context_length)
     print("Teacher-force window :", "MATCHES generate()")
+    print("Teacher-force batching:", "GROUPED BY PREFIX LENGTH")
     print("Before train QA NLL :", f"{before_train:.6f}")
     print("Before holdout NLL  :", f"{before_test:.6f}")
     print()
