@@ -201,7 +201,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.45 Baseline-Aware Retention")
+    print(" LLM_SEM v0.10.46 Validator Consistency")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -437,7 +437,7 @@ def main() -> None:
                     "--manifest", args.manifest,
                     "--retention-pass",
                     "--note",
-                    "v0.10.45 BASELINE-AWARE PARTIAL commit",
+                    "v0.10.46 VALIDATOR-CONSISTENT PARTIAL commit",
                 ]
                 if args.allow_cpu:
                     partial_promote_cmd.append("--allow-cpu")
@@ -871,7 +871,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.45 complete baseline-aware retention",
+        "--note", "v0.10.46 complete validator-consistent retention",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
