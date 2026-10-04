@@ -17,7 +17,7 @@ from tokenizer import Tokenizer
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.50 Proposition-Decomposed Bootstrap"
+        description="LLM_SEM v0.10.51 Natural-Query Proposition Bootstrap"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -103,16 +103,32 @@ def split_definition(concept: str, answer: str) -> list[str]:
     return [normalize_sentence(text)]
 
 
-def proposition_rows(concept: str, base: dict, parts: list[str]) -> list[dict]:
+def tokenizer_unknown_chars(tokenizer: Tokenizer, text: str) -> list[str]:
+    return sorted({
+        ch for ch in str(text)
+        if tokenizer.token_to_id.get(ch, tokenizer.unk_id) == tokenizer.unk_id
+    })
+
+
+def proposition_rows(concept: str, targets: list[dict], parts: list[str]) -> list[dict]:
+    """Assign natural runtime query variants to decomposed propositions.
+
+    Avoid synthetic queries such as '命題1/2'; they may introduce tokenizer
+    OOV characters and do not match the real runtime query distribution.
+    """
     rows = []
-    for index, answer in enumerate(parts, 1):
-        row = dict(base)
-        row["query"] = f"{concept}の命題{index}"
-        row["answer"] = answer
+    if not targets or not parts:
+        return rows
+
+    for index, raw in enumerate(targets):
+        row = dict(raw)
+        part = parts[index % len(parts)]
+        row["answer"] = part
         row["must_train"] = True
         row["protected"] = False
         row["sleep_source"] = "proposition_decomposition"
         row["concepts"] = [concept]
+        row["proposition_index"] = (index % len(parts)) + 1
         rows.append(row)
     return rows
 
@@ -138,7 +154,7 @@ def save_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.50",
+                "version": "v0.10.51",
                 "mode": mode,
                 "samples": rows,
             },
@@ -261,6 +277,7 @@ def main():
     source = Path(args.source)
     output = Path(args.output)
     rows = load_samples(Path(args.incremental_dataset))
+    tokenizer = Tokenizer.load(args.tokenizer)
     mandatory = [x for x in rows if bool(x.get("must_train", False))]
     protected = [x for x in rows if bool(x.get("protected", False))]
 
@@ -307,7 +324,21 @@ def main():
             print("PROPOSITION RESULT: SKIP - definition not decomposable.")
             continue
 
-        aux_rows = proposition_rows(concept, targets[0], parts)
+        unknown = tokenizer_unknown_chars(
+            tokenizer,
+            concept + canonical + "\n".join(
+                str(x.get("query", "")) for x in targets
+            ),
+        )
+        print("Tokenizer UNK   :", unknown or "(none)")
+        if unknown:
+            print(
+                "PROPOSITION RESULT: SKIP - tokenizer cannot represent "
+                + ", ".join(repr(ch) for ch in unknown)
+            )
+            continue
+
+        aux_rows = proposition_rows(concept, targets, parts)
         prop_dataset = output.with_name(
             f"{output.stem}.proposition{index}.json"
         )
