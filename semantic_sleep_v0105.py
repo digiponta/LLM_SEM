@@ -361,7 +361,8 @@ def main() -> None:
                 "--benchmark", args.benchmark,
                 "--tokenizer", args.tokenizer,
                 "--output", str(bootstrap_candidate),
-                "--epochs", "180",
+                "--anchor-epochs", "120",
+                "--full-epochs", "180",
                 "--learning-rate", str(
                     args.qa_learning_rate * args.incremental_lr_scale
                 ),
@@ -371,7 +372,8 @@ def main() -> None:
                 "--preserve-weight", str(args.qa_preserve_weight),
                 "--protected-distill-weight",
                 str(max(4.0, args.incremental_distill_weight * 0.5)),
-                "--new-knowledge-weight", "6.0",
+                "--anchor-weight", "8.0",
+                "--full-weight", "6.0",
                 "--train-blocks", str(args.incremental_train_blocks),
             ]
             if args.allow_cpu:
