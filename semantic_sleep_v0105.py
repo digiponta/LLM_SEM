@@ -201,7 +201,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.47 Concept Bootstrap")
+    print(" LLM_SEM v0.10.48 Anchor-First Concept Bootstrap")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -354,7 +354,7 @@ def main() -> None:
             )
             bootstrap_cmd = [
                 sys.executable,
-                "concept_bootstrap_v01047.py",
+                "concept_bootstrap_v01048.py",
                 "--source", str(current_source),
                 "--incremental-dataset", str(qa_dataset_path),
                 "--full-dataset", args.sleep_dataset,
