@@ -201,7 +201,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.39 Pairwise Consolidation Partial Commit Sleep")
+    print(" LLM_SEM v0.10.40 Context-Aligned Partial Resume Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -437,7 +437,7 @@ def main() -> None:
                     "--manifest", args.manifest,
                     "--retention-pass",
                     "--note",
-                    "v0.10.39 PAIRWISE CONSOLIDATION PARTIAL sleep commit",
+                    "v0.10.40 CONTEXT-ALIGNED PARTIAL sleep commit",
                 ]
                 if args.allow_cpu:
                     partial_promote_cmd.append("--allow-cpu")
@@ -871,7 +871,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.39 complete pairwise-consolidation sleep",
+        "--note", "v0.10.40 complete context-aligned sleep",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
