@@ -126,7 +126,7 @@ def save_repair_dataset(
         json.dumps(
             {
                 "version": "v0.10.40",
-                "mode": "protected-repair",
+                "mode": "protected-repair-v01040",
                 "samples": rows,
             },
             ensure_ascii=False,
@@ -164,7 +164,7 @@ def save_pairwise_dataset(
         json.dumps(
             {
                 "version": "v0.10.40",
-                "mode": "pairwise-consolidation",
+                "mode": "pairwise-consolidation-v01040",
                 "samples": rows,
             },
             ensure_ascii=False,
