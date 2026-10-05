@@ -19,7 +19,7 @@ from tokenizer import Tokenizer
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.53 Audited Runtime-Aligned Proposition Bootstrap"
+        description="LLM_SEM v0.10.55 Prefix-Weighted Proposition Bootstrap"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -131,6 +131,10 @@ def proposition_rows(concept: str, targets: list[dict], parts: list[str]) -> lis
         row["sleep_source"] = "proposition_decomposition"
         row["concepts"] = [concept]
         row["proposition_index"] = (index % len(parts)) + 1
+        # Character tokenizer: emphasize "concept + は、" so a new concept
+        # can cross the greedy-decoding boundary before learning the tail.
+        row["loss_prefix_tokens"] = min(12, max(1, len(concept) + 2))
+        row["loss_prefix_weight"] = 4.0
         rows.append(row)
     return rows
 
@@ -156,7 +160,7 @@ def save_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.53",
+                "version": "v0.10.55",
                 "mode": mode,
                 "samples": rows,
             },
