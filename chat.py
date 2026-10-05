@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.16.5 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.16.6 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -18,8 +18,8 @@ Commands
   - target: taught prompt/answer NLL
   - crossing: canonical-vs-pre-sleep-confuser sequence margin
   - greedy alignment: canonical token vs strongest local competitor margin
-  - preservation: prompt KL plus full source-trajectory replay on protected prompts
-  - output: model/model-sem-sleep-v0165.pt
+  - preservation: prompt KL + source NLL replay + runtime-aligned greedy replay
+  - output: model/model-sem-sleep-v0166.pt
   - memory remains on disk after sleep for auditability
 
 This is an experimental online internalization path.  It does not run the full
@@ -44,7 +44,7 @@ from tokenizer import Tokenizer
 DEFAULT_MODEL = "model/model-sem-internalized-v01575.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
-DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0165.pt"
+DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0166.pt"
 
 PROTECTED_PROMPTS = [
     "コンピュータとは",
@@ -66,7 +66,7 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.16.5 Chat + /sleep internalization"
+        description="LLM_SEM v0.16.6 Chat + /sleep internalization"
     )
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
@@ -78,13 +78,16 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.16.5 uses the decoder LR scale that actually crossed the boundary
+    # v0.16.6 uses the decoder LR scale that actually crossed the boundary
     # in v0.15.7.2, while monitoring preservation and stopping early.
     p.add_argument("--sleep-epochs", type=int, default=240)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--sleep-lr-lm-head", type=float, default=2.0e-4)
     p.add_argument("--sleep-kl", type=float, default=0.50)
-    p.add_argument("--sleep-replay-weight", type=float, default=1.00)
+    p.add_argument("--sleep-replay-weight", type=float, default=0.50)
+    p.add_argument("--sleep-runtime-replay-weight", type=float, default=1.50)
+    p.add_argument("--sleep-runtime-replay-margin", type=float, default=0.05)
+    p.add_argument("--sleep-min-runtime-replay-top1", type=float, default=1.00)
     p.add_argument("--sleep-max-replay-nll-delta", type=float, default=0.25)
     p.add_argument("--sleep-margin-weight", type=float, default=1.00)
     p.add_argument("--sleep-target-margin", type=float, default=0.15)
@@ -598,6 +601,140 @@ def mean_replay_nll(
     return sum(values) / len(values)
 
 
+def apply_repetition_penalty_to_logits(
+    logits: torch.Tensor,
+    seen_ids: List[int],
+    penalty: float,
+) -> torch.Tensor:
+    """Differentiably apply the same repetition penalty used by generate()."""
+    adjusted = logits.clone()
+    if penalty == 1.0:
+        return adjusted
+
+    unique_ids = sorted({
+        int(token_id)
+        for token_id in seen_ids
+        if 0 <= int(token_id) < adjusted.numel()
+    })
+    if not unique_ids:
+        return adjusted
+
+    index = torch.tensor(
+        unique_ids,
+        dtype=torch.long,
+        device=adjusted.device,
+    )
+    values = adjusted.index_select(0, index)
+    penalized = torch.where(
+        values >= 0,
+        values / penalty,
+        values * penalty,
+    )
+    adjusted = adjusted.index_copy(0, index, penalized)
+    return adjusted
+
+
+def runtime_replay_margin_stats(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    replay_rows: List[Dict[str, str]],
+    repetition_penalty: float,
+    target_margin: float,
+):
+    """Preserve source greedy decisions under the real generation rule.
+
+    Replay targets were captured from the source model with temperature=0 and
+    the same repetition penalty.  For every answer position, the source next
+    token is forced to stay above the strongest competing token after applying
+    that penalty to the current model logits.
+    """
+    device = next(model.parameters()).device
+    losses = []
+    all_margins = []
+
+    for item in replay_rows:
+        prompt_ids = encode_prompt(tokenizer, item["prompt"])
+        answer_ids = tokenizer.encode(
+            item["answer"],
+            add_bos=False,
+            add_eos=False,
+        )
+        if not answer_ids:
+            continue
+
+        full = prompt_ids + answer_ids
+        x = torch.tensor(
+            [full[:-1]],
+            dtype=torch.long,
+            device=device,
+        )
+        logits_all = model(x)[0]
+
+        prompt_count = len(prompt_ids)
+        for answer_pos, target_id in enumerate(answer_ids):
+            full_pos = prompt_count - 1 + answer_pos
+            if full_pos >= logits_all.size(0):
+                break
+
+            prefix_end = prompt_count + answer_pos
+            prefix = full[:prefix_end]
+            if len(prefix) > model.context_length:
+                # The vectorized pass above no longer matches generate() once
+                # the rolling context window truncates.  Skip those late
+                # positions rather than train on a mismatched trajectory.
+                break
+
+            logits = apply_repetition_penalty_to_logits(
+                logits_all[full_pos],
+                prefix,
+                repetition_penalty,
+            )
+            target_logit = logits[int(target_id)]
+            competitor = logits.clone()
+            competitor[int(target_id)] = float("-inf")
+            strongest = competitor.max()
+            margin = target_logit - strongest
+            all_margins.append(margin)
+
+            margin_target = torch.as_tensor(
+                target_margin,
+                dtype=margin.dtype,
+                device=margin.device,
+            )
+            losses.append(F.relu(margin_target - margin))
+
+    if not losses:
+        zero = torch.zeros((), device=device)
+        return zero, zero, zero, zero
+
+    loss = torch.stack(losses).mean()
+    margins = torch.stack(all_margins)
+    top1 = (margins >= 0.0).float().mean()
+    return loss, top1, margins.min(), margins.mean()
+
+
+@torch.no_grad()
+def mean_runtime_replay_metrics(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    replay_rows: List[Dict[str, str]],
+    repetition_penalty: float,
+    target_margin: float,
+):
+    _, top1, min_margin, mean_margin = runtime_replay_margin_stats(
+        model,
+        tokenizer,
+        replay_rows,
+        repetition_penalty,
+        target_margin,
+    )
+    return {
+        "top1_ratio": float(top1.item()),
+        "min_margin": float(min_margin.item()),
+        "mean_margin": float(mean_margin.item()),
+    }
+
+
 def freeze_for_sleep(model: LanguageModel) -> None:
     for parameter in model.parameters():
         parameter.requires_grad = False
@@ -627,7 +764,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.16.5",
+        "version": "v0.16.6",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "memory_count": memory_count,
@@ -654,6 +791,9 @@ def run_sleep(
     lr_lm_head: float,
     lambda_kl: float,
     replay_weight: float,
+    runtime_replay_weight: float,
+    runtime_replay_margin: float,
+    min_runtime_replay_top1: float,
     max_replay_nll_delta: float,
     margin_weight: float,
     target_margin: float,
@@ -738,14 +878,17 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.16.5 /sleep")
+    print(" LLM_SEM v0.16.6 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
     print("LR final_norm        :", lr_final_norm)
     print("LR lm_head           :", lr_lm_head)
     print("KL preservation      :", lambda_kl)
-    print("Replay weight        :", replay_weight)
+    print("Replay NLL weight    :", replay_weight)
+    print("Runtime replay wt    :", runtime_replay_weight)
+    print("Runtime replay margin:", runtime_replay_margin)
+    print("Min replay top1      :", min_runtime_replay_top1)
     print("Max replay NLL delta :", max_replay_nll_delta)
     print("Sequence margin wt   :", margin_weight)
     print("Sequence target      :", target_margin)
@@ -759,6 +902,21 @@ def run_sleep(
     print("Trainable            : final_norm + lm_head")
     print(f"Memory NLL before    : {before_nll:.6f}")
     print(f"Replay NLL before    : {before_replay_nll:.6f}")
+    before_runtime_replay = mean_runtime_replay_metrics(
+        model,
+        tokenizer,
+        replay_rows,
+        1.10,
+        runtime_replay_margin,
+    )
+    print(
+        "Replay greedy before : "
+        f"{before_runtime_replay['top1_ratio']:.1%}"
+    )
+    print(
+        "Replay min margin    : "
+        f"{before_runtime_replay['min_margin']:+.6f}"
+    )
     before_token = mean_token_margin_metrics(
         model,
         tokenizer,
@@ -789,6 +947,7 @@ def run_sleep(
         total_margin = 0.0
         total_token_margin = 0.0
         total_replay = 0.0
+        total_runtime_replay = 0.0
         total_kl = 0.0
 
         for item, confuser in zip(memory, confusers):
@@ -838,12 +997,25 @@ def run_sleep(
                 tokenizer,
                 replay_rows,
             )
+            (
+                runtime_replay_loss,
+                _runtime_replay_top1,
+                _runtime_replay_min,
+                _runtime_replay_mean,
+            ) = runtime_replay_margin_stats(
+                model,
+                tokenizer,
+                replay_rows,
+                1.10,
+                runtime_replay_margin,
+            )
 
             loss = (
                 target_loss
                 + margin_weight * margin_loss
                 + token_margin_weight * token_margin_loss
                 + replay_weight * source_replay_loss
+                + runtime_replay_weight * runtime_replay_loss
                 + lambda_kl * preserve_loss
             )
             loss.backward()
@@ -862,6 +1034,7 @@ def run_sleep(
             total_margin += float(margin_loss.item())
             total_token_margin += float(token_margin_loss.item())
             total_replay += float(source_replay_loss.item())
+            total_runtime_replay += float(runtime_replay_loss.item())
             total_kl += float(preserve_loss.item())
 
         should_check = (
@@ -895,6 +1068,13 @@ def run_sleep(
                 replay_rows,
             )
             replay_delta = current_replay_nll - before_replay_nll
+            runtime_replay_metrics = mean_runtime_replay_metrics(
+                model,
+                tokenizer,
+                replay_rows,
+                1.10,
+                runtime_replay_margin,
+            )
             token_metrics = mean_token_margin_metrics(
                 model,
                 tokenizer,
@@ -917,6 +1097,9 @@ def run_sleep(
                 f"replay_nll={current_replay_nll:.6f} "
                 f"replay_delta={replay_delta:+.6f} "
                 f"replay_loss={total_replay / count:.6f} "
+                f"replay_top1={runtime_replay_metrics['top1_ratio']:.1%} "
+                f"replay_min={runtime_replay_metrics['min_margin']:+.4f} "
+                f"runtime_replay_loss={total_runtime_replay / count:.6f} "
                 f"preserve_kl={total_kl / count:.6f} "
                 f"prompt_js={current_js:.6f}"
             )
@@ -924,6 +1107,7 @@ def run_sleep(
             if (
                 current_js <= max_prompt_js
                 and replay_delta <= max_replay_nll_delta
+                and runtime_replay_metrics["top1_ratio"] >= min_runtime_replay_top1
                 and current_nll < best_nll
             ):
                 best_nll = current_nll
@@ -948,6 +1132,8 @@ def run_sleep(
                 and token_metrics["top1_ratio"] >= min_token_top1
                 and token_metrics["min_margin"] >= target_token_margin
                 and replay_delta <= max_replay_nll_delta
+                and runtime_replay_metrics["top1_ratio"] >= min_runtime_replay_top1
+                and runtime_replay_metrics["min_margin"] >= 0.0
             ):
                 stop_reason = "GREEDY_CANONICAL_TARGET_REACHED"
                 print(
@@ -984,6 +1170,13 @@ def run_sleep(
         replay_rows,
     )
     replay_delta = after_replay_nll - before_replay_nll
+    after_runtime_replay = mean_runtime_replay_metrics(
+        model,
+        tokenizer,
+        replay_rows,
+        1.10,
+        runtime_replay_margin,
+    )
     after_token = mean_token_margin_metrics(
         model,
         tokenizer,
@@ -1037,6 +1230,18 @@ def run_sleep(
         f"{before_replay_nll:.6f} -> {after_replay_nll:.6f}"
     )
     print(f"Replay NLL delta     : {replay_delta:+.6f}")
+    print(
+        "Replay greedy top1   : "
+        f"{after_runtime_replay['top1_ratio']:.1%}"
+    )
+    print(
+        "Replay min margin    : "
+        f"{after_runtime_replay['min_margin']:+.6f}"
+    )
+    print(
+        "Replay mean margin   : "
+        f"{after_runtime_replay['mean_margin']:+.6f}"
+    )
     print(f"Protected prompt JS  : {prompt_js:.6f}")
     print_hard_token_diagnostics(
         model,
@@ -1113,7 +1318,7 @@ def main():
     memory = load_memory(memory_path)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.16.5 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.16.6 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -1206,6 +1411,9 @@ def main():
                 lr_lm_head=args.sleep_lr_lm_head,
                 lambda_kl=args.sleep_kl,
                 replay_weight=args.sleep_replay_weight,
+                runtime_replay_weight=args.sleep_runtime_replay_weight,
+                runtime_replay_margin=args.sleep_runtime_replay_margin,
+                min_runtime_replay_top1=args.sleep_min_runtime_replay_top1,
                 max_replay_nll_delta=args.sleep_max_replay_nll_delta,
                 margin_weight=args.sleep_margin_weight,
                 target_margin=args.sleep_target_margin,
