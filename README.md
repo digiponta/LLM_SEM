@@ -672,3 +672,132 @@ discovery-first:
 
 If no threshold pair satisfies the requested Known Recall constraint, the
 balanced policy falls back to the threshold pair with the highest Known Recall.
+
+
+## v0.15.7.5 — Semantic Memory Internalization completed
+
+The v0.15.7.x experiments demonstrate a complete path from external Semantic
+Memory to a promoted model checkpoint whose decoder behavior reflects the new
+knowledge while preserving the source model's trajectory within the defined
+validation thresholds.
+
+The experimental progression was:
+
+```text
+Semantic Memory
+    |
+latent internalization
+    |  target NLL improves and weights change
+    |
+decoder preference shift
+    |
+decoder boundary crossing
+    |  canonical continuation > confuser continuation
+    |
+trajectory preservation
+    |  source behavior remains within preservation thresholds
+    |
+qualified candidate
+    |
+promotion gate
+    |
+model/model-sem-internalized-v01575.pt
+```
+
+### Final promoted checkpoint
+
+```text
+model/model-sem-internalized-v01575.pt
+```
+
+Promotion provenance is written to:
+
+```text
+results/promotion_manifest_v01575.json
+```
+
+### Boundary-crossing result
+
+Prompt-aware decoder validation against the protected source checkpoint
+`model/model-sem-diagnostic-v0154.pt` produced:
+
+```text
+Mean margin BEFORE : -1.807448
+Mean margin AFTER  : +0.436255
+Mean margin gain   : +2.243703
+Boundary crossed   : 4/4
+RESULT             : PROMPT_AWARE_PASS
+```
+
+This means the canonical quantum-sensor continuation moved from below the
+confuser continuation to above it for every prompt-aware probe.
+
+### Preservation result
+
+The selected decoder candidate used:
+
+```text
+final_norm learning rate : 5e-4
+lm_head learning rate    : 2e-4
+```
+
+and passed trajectory-preservation validation:
+
+```text
+Mean prompt JS           : 0.042576
+Prompt top1 retention    : 83.3%
+Mean trajectory JS       : 0.042938
+Mean trajectory top1     : 76.6%
+Mean source NLL delta    : +0.117602
+Boundary check           : PASS
+Trajectory preservation : PASS
+QUALIFIED                : YES
+```
+
+A stronger candidate using `1e-3 / 5e-4` crossed the decoder boundary but
+failed preservation, confirming that successful internalization requires a
+balance between target acquisition and source-behavior retention.
+
+### Final validation and promotion
+
+The promoted checkpoint was re-evaluated after promotion metadata was added and
+retained the same boundary and trajectory metrics. The final promotion gate
+reported:
+
+```text
+Boundary             : PROMPT_AWARE_PASS
+Trajectory JS        : 0.042938
+Trajectory top1      : 76.6%
+Source NLL delta     : +0.117602
+RESULT               : PROMOTED
+```
+
+The final verification commands are:
+
+```powershell
+python .\run_decoder_boundary_diagnostic_v01561.py `
+  --before .\model\model-sem-diagnostic-v0154.pt `
+  --after .\model\model-sem-internalized-v01575.pt `
+  --tokenizer .\model\tokenizer.json
+
+python .\run_trajectory_preservation_v01574.py `
+  --source .\model\model-sem-diagnostic-v0154.pt `
+  --candidate .\model\model-sem-internalized-v01575.pt `
+  --tokenizer .\model\tokenizer.json
+```
+
+### Experimental conclusion
+
+v0.15.7.5 establishes the following experimental result:
+
+> Semantic knowledge held in external Semantic Memory can be internalized into
+> the model weights, moved across the decoder decision boundary, and promoted
+> as an internalized checkpoint while retaining the protected source trajectory
+> within the defined validation thresholds.
+
+This is an experimental result for the current model, dataset, prompts, and
+validation policy. It should not be interpreted as a general proof that all
+semantic memories can be safely internalized under arbitrary conditions.
+
+See `RELEASE_NOTES_v0.15.7.5.md` for the experiment history and validation
+summary.
