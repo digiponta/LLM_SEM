@@ -11,13 +11,15 @@ from pathlib import Path
 import torch
 
 from model import LanguageModel
-from semantic_guided_answer_finetune_v097 import generation_similarity
+from runtime_answer_retention_v01015 import ratio, runtime_generate
+from semantic_eval import load_benchmark
+from semantic_router import SemanticRouter
 from tokenizer import Tokenizer
 
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.51 Natural-Query Proposition Bootstrap"
+        description="LLM_SEM v0.10.52 Runtime-Aligned Proposition Bootstrap"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -154,7 +156,7 @@ def save_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.51",
+                "version": "v0.10.52",
                 "mode": mode,
                 "samples": rows,
             },
@@ -234,26 +236,35 @@ def full_runtime_metrics(
 def proposition_generation_mean(
     model_path: Path,
     tokenizer_path: str,
+    benchmark_path: str,
     rows: list[dict],
     device: torch.device,
 ) -> tuple[float, list[tuple[str, float, str, str]]]:
+    """Evaluate proposition targets on the exact /internal runtime prompt."""
     tokenizer = Tokenizer.load(tokenizer_path)
     model, _ = LanguageModel.load_checkpoint(model_path, device=device)
+    benchmark = load_benchmark(benchmark_path)
+    router = SemanticRouter(model, tokenizer, alpha=0.35)
+    router.fit(benchmark)
+
     values = []
     details = []
     for row in rows:
-        sim, generated = generation_similarity(
+        query = str(row["query"])
+        expected = str(row["answer"])
+        generated, _, _ = runtime_generate(
             model,
             tokenizer,
-            row,
-            device,
+            router,
+            query,
         )
+        sim = ratio(generated, expected)
         values.append(sim)
         details.append(
             (
-                str(row["query"]),
+                query,
                 sim,
-                str(row["answer"]),
+                expected,
                 generated,
             )
         )
@@ -362,6 +373,7 @@ def main():
         before_prop, _ = proposition_generation_mean(
             current,
             args.tokenizer,
+            args.benchmark,
             aux_rows,
             device,
         )
@@ -381,6 +393,7 @@ def main():
         after_prop, prop_details = proposition_generation_mean(
             prop_candidate,
             args.tokenizer,
+            args.benchmark,
             aux_rows,
             device,
         )
