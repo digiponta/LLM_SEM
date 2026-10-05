@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.16.4 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.16.5 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -18,8 +18,8 @@ Commands
   - target: taught prompt/answer NLL
   - crossing: canonical-vs-pre-sleep-confuser sequence margin
   - greedy alignment: canonical token vs strongest local competitor margin
-  - preservation: KL divergence against the pre-sleep model on protected prompts
-  - output: model/model-sem-sleep-v0164.pt
+  - preservation: prompt KL plus full source-trajectory replay on protected prompts
+  - output: model/model-sem-sleep-v0165.pt
   - memory remains on disk after sleep for auditability
 
 This is an experimental online internalization path.  It does not run the full
@@ -44,7 +44,7 @@ from tokenizer import Tokenizer
 DEFAULT_MODEL = "model/model-sem-internalized-v01575.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
-DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0164.pt"
+DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0165.pt"
 
 PROTECTED_PROMPTS = [
     "コンピュータとは",
@@ -57,6 +57,8 @@ PROTECTED_PROMPTS = [
     "食べ物とは",
     "交通とは",
     "なぜGPUは高速",
+    "CPUとは",
+    "GPUとは",
     "CPUの役割",
     "GPUの役割",
 ]
@@ -64,7 +66,7 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.16.4 Chat + /sleep internalization"
+        description="LLM_SEM v0.16.5 Chat + /sleep internalization"
     )
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
@@ -76,12 +78,14 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.16.4 uses the decoder LR scale that actually crossed the boundary
+    # v0.16.5 uses the decoder LR scale that actually crossed the boundary
     # in v0.15.7.2, while monitoring preservation and stopping early.
     p.add_argument("--sleep-epochs", type=int, default=240)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--sleep-lr-lm-head", type=float, default=2.0e-4)
     p.add_argument("--sleep-kl", type=float, default=0.50)
+    p.add_argument("--sleep-replay-weight", type=float, default=1.00)
+    p.add_argument("--sleep-max-replay-nll-delta", type=float, default=0.25)
     p.add_argument("--sleep-margin-weight", type=float, default=1.00)
     p.add_argument("--sleep-target-margin", type=float, default=0.15)
     p.add_argument("--sleep-token-margin-weight", type=float, default=2.00)
@@ -529,6 +533,71 @@ def mean_prompt_js(
     return sum(values) / max(1, len(values))
 
 
+@torch.no_grad()
+def capture_replay_targets(
+    reference: LanguageModel,
+    tokenizer: Tokenizer,
+    prompts: List[str],
+) -> List[Dict[str, str]]:
+    rows = []
+    for prompt in prompts:
+        answer = generate_answer(
+            model=reference,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            max_new_tokens=48,
+            temperature=0.0,
+            top_k=40,
+            repetition_penalty=1.10,
+        )
+        if answer:
+            rows.append({"prompt": prompt, "answer": answer})
+    return rows
+
+
+def replay_loss(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    replay_rows: List[Dict[str, str]],
+) -> torch.Tensor:
+    device = next(model.parameters()).device
+    if not replay_rows:
+        return torch.zeros((), device=device)
+
+    losses = [
+        continuation_nll(
+            model,
+            tokenizer,
+            item["prompt"],
+            item["answer"],
+        )
+        for item in replay_rows
+    ]
+    return torch.stack(losses).mean()
+
+
+@torch.no_grad()
+def mean_replay_nll(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    replay_rows: List[Dict[str, str]],
+) -> float:
+    if not replay_rows:
+        return 0.0
+    values = [
+        float(
+            continuation_nll(
+                model,
+                tokenizer,
+                item["prompt"],
+                item["answer"],
+            ).item()
+        )
+        for item in replay_rows
+    ]
+    return sum(values) / len(values)
+
+
 def freeze_for_sleep(model: LanguageModel) -> None:
     for parameter in model.parameters():
         parameter.requires_grad = False
@@ -558,7 +627,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.16.4",
+        "version": "v0.16.5",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "memory_count": memory_count,
@@ -584,6 +653,8 @@ def run_sleep(
     lr_final_norm: float,
     lr_lm_head: float,
     lambda_kl: float,
+    replay_weight: float,
+    max_replay_nll_delta: float,
     margin_weight: float,
     target_margin: float,
     token_margin_weight: float,
@@ -612,6 +683,16 @@ def run_sleep(
         tokenizer,
         memory,
     )
+    replay_rows = capture_replay_targets(
+        reference,
+        tokenizer,
+        PROTECTED_PROMPTS,
+    )
+    before_replay_nll = mean_replay_nll(
+        reference,
+        tokenizer,
+        replay_rows,
+    )
     confusers = capture_confusers(
         reference,
         tokenizer,
@@ -624,6 +705,12 @@ def run_sleep(
         confusers,
     )
 
+    print("SLEEP> captured source replay trajectories")
+    for item in replay_rows:
+        print(
+            f"  REPLAY prompt={item['prompt']!r} "
+            f"answer={item['answer']!r}"
+        )
     print("SLEEP> captured pre-sleep confusers")
     for index, (item, confuser) in enumerate(
         zip(memory, confusers), 1
@@ -651,13 +738,15 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.16.4 /sleep")
+    print(" LLM_SEM v0.16.5 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
     print("LR final_norm        :", lr_final_norm)
     print("LR lm_head           :", lr_lm_head)
     print("KL preservation      :", lambda_kl)
+    print("Replay weight        :", replay_weight)
+    print("Max replay NLL delta :", max_replay_nll_delta)
     print("Sequence margin wt   :", margin_weight)
     print("Sequence target      :", target_margin)
     print("Token margin wt      :", token_margin_weight)
@@ -669,6 +758,7 @@ def run_sleep(
     print("Check every          :", check_every)
     print("Trainable            : final_norm + lm_head")
     print(f"Memory NLL before    : {before_nll:.6f}")
+    print(f"Replay NLL before    : {before_replay_nll:.6f}")
     before_token = mean_token_margin_metrics(
         model,
         tokenizer,
@@ -698,6 +788,7 @@ def run_sleep(
         total_target = 0.0
         total_margin = 0.0
         total_token_margin = 0.0
+        total_replay = 0.0
         total_kl = 0.0
 
         for item, confuser in zip(memory, confusers):
@@ -742,11 +833,17 @@ def run_sleep(
                 tokenizer,
                 PROTECTED_PROMPTS,
             )
+            source_replay_loss = replay_loss(
+                model,
+                tokenizer,
+                replay_rows,
+            )
 
             loss = (
                 target_loss
                 + margin_weight * margin_loss
                 + token_margin_weight * token_margin_loss
+                + replay_weight * source_replay_loss
                 + lambda_kl * preserve_loss
             )
             loss.backward()
@@ -764,6 +861,7 @@ def run_sleep(
             total_target += float(target_loss.item())
             total_margin += float(margin_loss.item())
             total_token_margin += float(token_margin_loss.item())
+            total_replay += float(source_replay_loss.item())
             total_kl += float(preserve_loss.item())
 
         should_check = (
@@ -791,6 +889,12 @@ def run_sleep(
                 memory,
                 confusers,
             )
+            current_replay_nll = mean_replay_nll(
+                model,
+                tokenizer,
+                replay_rows,
+            )
+            replay_delta = current_replay_nll - before_replay_nll
             token_metrics = mean_token_margin_metrics(
                 model,
                 tokenizer,
@@ -810,20 +914,30 @@ def run_sleep(
                 f"token_top1={token_metrics['top1_ratio']:.1%} "
                 f"token_min={token_metrics['min_margin']:+.4f} "
                 f"token_loss={total_token_margin / count:.6f} "
+                f"replay_nll={current_replay_nll:.6f} "
+                f"replay_delta={replay_delta:+.6f} "
+                f"replay_loss={total_replay / count:.6f} "
                 f"preserve_kl={total_kl / count:.6f} "
                 f"prompt_js={current_js:.6f}"
             )
 
-            if current_js <= max_prompt_js and current_nll < best_nll:
+            if (
+                current_js <= max_prompt_js
+                and replay_delta <= max_replay_nll_delta
+                and current_nll < best_nll
+            ):
                 best_nll = current_nll
                 best_js = current_js
                 best_epoch = epoch
                 best_state = copy.deepcopy(model.state_dict())
 
-            if current_js > max_prompt_js:
+            if (
+                current_js > max_prompt_js
+                or replay_delta > max_replay_nll_delta
+            ):
                 stop_reason = "PRESERVATION_LIMIT"
                 print(
-                    "SLEEP> preservation limit reached; "
+                    "SLEEP> preservation/replay limit reached; "
                     "restoring best safe checkpoint"
                 )
                 break
@@ -833,6 +947,7 @@ def run_sleep(
                 and current_margin >= target_margin
                 and token_metrics["top1_ratio"] >= min_token_top1
                 and token_metrics["min_margin"] >= target_token_margin
+                and replay_delta <= max_replay_nll_delta
             ):
                 stop_reason = "GREEDY_CANONICAL_TARGET_REACHED"
                 print(
@@ -863,6 +978,12 @@ def run_sleep(
         tokenizer,
         PROTECTED_PROMPTS,
     )
+    after_replay_nll = mean_replay_nll(
+        model,
+        tokenizer,
+        replay_rows,
+    )
+    replay_delta = after_replay_nll - before_replay_nll
     after_token = mean_token_margin_metrics(
         model,
         tokenizer,
@@ -911,6 +1032,11 @@ def run_sleep(
         "Mean token margin    : "
         f"{after_token['mean_margin']:+.6f}"
     )
+    print(
+        f"Replay NLL           : "
+        f"{before_replay_nll:.6f} -> {after_replay_nll:.6f}"
+    )
+    print(f"Replay NLL delta     : {replay_delta:+.6f}")
     print(f"Protected prompt JS  : {prompt_js:.6f}")
     print_hard_token_diagnostics(
         model,
@@ -987,7 +1113,7 @@ def main():
     memory = load_memory(memory_path)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.16.4 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.16.5 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -1079,6 +1205,8 @@ def main():
                 lr_final_norm=args.sleep_lr_final_norm,
                 lr_lm_head=args.sleep_lr_lm_head,
                 lambda_kl=args.sleep_kl,
+                replay_weight=args.sleep_replay_weight,
+                max_replay_nll_delta=args.sleep_max_replay_nll_delta,
                 margin_weight=args.sleep_margin_weight,
                 target_margin=args.sleep_target_margin,
                 token_margin_weight=args.sleep_token_margin_weight,
