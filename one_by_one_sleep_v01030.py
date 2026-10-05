@@ -196,6 +196,8 @@ def runtime_result(
     ]
     if allow_cpu:
         cmd.append("--allow-cpu")
+    if result_json.exists():
+        result_json.unlink()
     code = run(cmd)
     if not result_json.exists():
         raise RuntimeError(f"runtime result not created: {result_json}")
@@ -325,7 +327,7 @@ def main():
     new_rows = remaining_new_rows
 
     print("=" * 108)
-    print(" LLM_SEM v0.10.47 Concept Bootstrap Refinement")
+    print(" LLM_SEM v0.10.53 Audited One-by-One Refinement")
     print("=" * 108)
     print("Source model       :", source)
     print("New training rows  :", len(new_rows))
@@ -1048,7 +1050,7 @@ def main():
     state_json.write_text(
         json.dumps(
             {
-                "version": "v0.10.37",
+                "version": "v0.10.53",
                 "state": state,
                 "source": str(source),
                 "output": str(output),
