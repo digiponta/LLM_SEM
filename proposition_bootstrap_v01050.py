@@ -19,7 +19,7 @@ from tokenizer import Tokenizer
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.55 Prefix-Weighted Proposition Bootstrap"
+        description="LLM_SEM v0.10.56 First-Divergence Proposition Bootstrap"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -35,6 +35,8 @@ def parse_args():
     p.add_argument("--protected-distill-weight", type=float, default=4.0)
     p.add_argument("--proposition-weight", type=float, default=8.0)
     p.add_argument("--full-weight", type=float, default=6.0)
+    p.add_argument("--first-divergence-weight", type=float, default=2.0)
+    p.add_argument("--first-divergence-margin", type=float, default=1.0)
     p.add_argument("--train-blocks", type=int, default=1)
     p.add_argument("--min-proposition-gain", type=float, default=0.05)
     p.add_argument("--min-full-gain", type=float, default=0.05)
@@ -160,7 +162,7 @@ def save_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.55",
+                "version": "v0.10.56",
                 "mode": mode,
                 "samples": rows,
             },
@@ -210,6 +212,8 @@ def train(
         "--protected-distill-weight",
         str(args.protected_distill_weight),
         "--new-knowledge-weight", str(new_weight),
+        "--first-divergence-weight", str(args.first_divergence_weight),
+        "--first-divergence-margin", str(args.first_divergence_margin),
         "--train-blocks", str(args.train_blocks),
         "--min-generation-sim", "0.0",
         "--result-json", str(result_json),
