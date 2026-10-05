@@ -21,14 +21,14 @@ from adaptive_semantic_learning import (
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.11 iterative full sleep consolidation"
+        description="LLM_SEM v0.10.53 audited iterative sleep consolidation"
     )
     p.add_argument("--memory", default="data/semantic_memory.jsonl")
     p.add_argument("--model", required=True)
     p.add_argument("--tokenizer", default="model/tokenizer.json")
     p.add_argument("--benchmark", default="my_benchmark.csv")
-    p.add_argument("--candidate", default="model/model-sem-sleep-v0111.pt")
-    p.add_argument("--semantic-candidate", default="model/model-sem-sleep-sem-v0111.pt")
+    p.add_argument("--candidate", default="model/model-sem-sleep-v0153.pt")
+    p.add_argument("--semantic-candidate", default="model/model-sem-sleep-sem-v0153.pt")
     p.add_argument("--manifest", default="model/active-model.json")
     p.add_argument("--base-answer-memory", default="data/semantic_guided_qa_v097.json")
     p.add_argument("--learned-answer-memory", default="data/semantic_answer_memory_learned.jsonl")
@@ -201,7 +201,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.52 Runtime-Aligned Proposition Sleep")
+    print(" LLM_SEM v0.10.53 Audited Proposition Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -292,10 +292,16 @@ def main() -> None:
         if args.allow_cpu:
             precheck_cmd.append("--allow-cpu")
 
+        if precheck_json.exists():
+            precheck_json.unlink()
         precheck_code = run_step_code(
             precheck_cmd,
             "retention-first internalization precheck",
         )
+        if not precheck_json.exists():
+            raise RuntimeError(
+                f"retention-first precheck did not create fresh result: {precheck_json}"
+            )
 
         if precheck_code == 0:
             final_candidate.parent.mkdir(parents=True, exist_ok=True)
@@ -489,7 +495,7 @@ def main() -> None:
                     "--manifest", args.manifest,
                     "--retention-pass",
                     "--note",
-                    "v0.10.52 RUNTIME-ALIGNED PROPOSITION PARTIAL commit",
+                    "v0.10.53 AUDITED PROPOSITION PARTIAL commit",
                 ]
                 if args.allow_cpu:
                     partial_promote_cmd.append("--allow-cpu")
@@ -576,6 +582,8 @@ def main() -> None:
                 if args.allow_cpu:
                     qa_cmd.append("--allow-cpu")
 
+                if result_json.exists():
+                    result_json.unlink()
                 try:
                     run_step(
                         qa_cmd,
@@ -643,6 +651,8 @@ def main() -> None:
                     if args.allow_cpu:
                         runtime_cmd.append("--allow-cpu")
 
+                    if runtime_json.exists():
+                        runtime_json.unlink()
                     runtime_code = run_step_code(
                         runtime_cmd,
                         f"full runtime checkpoint validation round {round_index}",
@@ -923,7 +933,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.52 complete runtime-aligned proposition retention",
+        "--note", "v0.10.53 complete audited proposition retention",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
