@@ -118,6 +118,7 @@ def parse_args():
     p.add_argument("--repair-lr-lm-head", type=float, default=2.0e-4)
     p.add_argument("--repair-nll-weight", type=float, default=1.0)
     p.add_argument("--repair-runtime-weight", type=float, default=4.0)
+    p.add_argument("--repair-runtime-hard-weight", type=float, default=4.0)
     p.add_argument("--repair-runtime-margin", type=float, default=0.10)
     p.add_argument("--repair-check-every", type=int, default=10)
     return p.parse_args()
@@ -674,6 +675,7 @@ def runtime_replay_margin_stats(
     replay_rows: List[Dict[str, str]],
     repetition_penalty: float,
     target_margin: float,
+    hard_weight: float = 0.0,
 ):
     """Runtime-aligned canonical token margin.
 
@@ -762,7 +764,8 @@ def runtime_replay_margin_stats(
         zero = torch.zeros((), device=device)
         return zero, zero, zero, zero
 
-    loss = torch.stack(losses).mean()
+    hinge_losses = torch.stack(losses)
+    loss = hinge_losses.mean() + hard_weight * hinge_losses.max()
     margins = torch.stack(all_margins)
     top1 = (margins >= 0.0).float().mean()
     return loss, top1, margins.min(), margins.mean()
@@ -848,6 +851,7 @@ def run_repair(
     lr_lm_head: float,
     nll_weight: float,
     runtime_weight: float,
+    runtime_hard_weight: float,
     runtime_margin: float,
     repetition_penalty: float,
     clip_grad: float,
@@ -895,6 +899,7 @@ def run_repair(
     print("LR lm_head           :", lr_lm_head)
     print("NLL weight           :", nll_weight)
     print("Runtime margin wt    :", runtime_weight)
+    print("Runtime hard wt      :", runtime_hard_weight)
     print("Runtime target margin:", runtime_margin)
     print("Repetition penalty   :", repetition_penalty)
     print("Trainable            : final_norm + lm_head")
@@ -943,6 +948,7 @@ def run_repair(
             protected_rows,
             repetition_penalty,
             runtime_margin,
+            runtime_hard_weight,
         )
 
         loss = (
@@ -1837,6 +1843,7 @@ def main():
                 lr_lm_head=args.repair_lr_lm_head,
                 nll_weight=args.repair_nll_weight,
                 runtime_weight=args.repair_runtime_weight,
+                runtime_hard_weight=args.repair_runtime_hard_weight,
                 runtime_margin=args.repair_runtime_margin,
                 repetition_penalty=args.repetition_penalty,
                 clip_grad=args.sleep_clip_grad,
