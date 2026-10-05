@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.16.9 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.17.0 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -20,8 +20,9 @@ Commands
   - target: taught prompt/answer NLL
   - crossing: canonical-vs-pre-sleep-confuser sequence margin
   - greedy alignment: canonical token vs strongest local competitor margin
-  - retention/correction: validated protected knowledge (NLL + token margin)
-  - output: model/model-sem-sleep-v0169.pt
+  - retention/correction: validated protected knowledge
+    (NLL + teacher-forced margin + runtime-aligned greedy margin)
+  - output: model/model-sem-sleep-v0170.pt
   - memory remains on disk after sleep for auditability
 
 This is an experimental online internalization path.  It does not run the full
@@ -47,7 +48,7 @@ DEFAULT_MODEL = "model/model-sem-internalized-v01575.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
 DEFAULT_PROTECTED = "data/protected_knowledge_v0167.jsonl"
-DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0169.pt"
+DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0170.pt"
 DEFAULT_REPAIR_MODEL = "model/model-sem-canonical-base-v0169.pt"
 
 PROTECTED_PROMPTS = [
@@ -70,7 +71,7 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.16.9 Chat + /sleep internalization"
+        description="LLM_SEM v0.17.0 Chat + /sleep internalization"
     )
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
@@ -84,7 +85,7 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.16.9 treats validated protected knowledge as authoritative
+    # v0.17.0 treats validated protected knowledge as authoritative
     # multi-task supervision, not as a source-model preservation constraint.
     p.add_argument("--sleep-epochs", type=int, default=600)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
@@ -96,6 +97,8 @@ def parse_args():
     p.add_argument("--sleep-protected-token-weight", type=float, default=3.00)
     p.add_argument("--sleep-protected-hard-weight", type=float, default=2.00)
     p.add_argument("--sleep-protected-target-margin", type=float, default=0.05)
+    p.add_argument("--sleep-protected-runtime-weight", type=float, default=4.00)
+    p.add_argument("--sleep-protected-runtime-margin", type=float, default=0.10)
     p.add_argument("--sleep-min-protected-top1", type=float, default=1.00)
     p.add_argument("--sleep-max-protected-nll-delta", type=float, default=0.25)
     p.add_argument("--sleep-margin-weight", type=float, default=1.00)
@@ -109,7 +112,7 @@ def parse_args():
     p.add_argument("--sleep-max-prompt-js", type=float, default=0.08)
     p.add_argument("--sleep-check-every", type=int, default=10)
 
-    # v0.16.9 Phase A: repair the validated canonical base first.
+    # v0.17.0 Phase A: repair the validated canonical base first.
     p.add_argument("--repair-epochs", type=int, default=800)
     p.add_argument("--repair-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--repair-lr-lm-head", type=float, default=2.0e-4)
@@ -817,7 +820,7 @@ def save_repair_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["repair"] = {
-        "version": "v0.16.9",
+        "version": "v0.17.0",
         "source_checkpoint": str(source_path),
         "protected_file": str(protected_path),
         "protected_count": protected_count,
@@ -884,7 +887,7 @@ def run_repair(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.16.9 /repair - Canonical Base Repair")
+    print(" LLM_SEM v0.17.0 /repair - Canonical Base Repair")
     print("=" * 72)
     print("Protected entries    :", len(protected_rows))
     print("Epochs               :", epochs)
@@ -1096,7 +1099,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.16.9",
+        "version": "v0.17.0",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "protected_file": str(protected_path),
@@ -1129,6 +1132,9 @@ def run_sleep(
     protected_token_weight: float,
     protected_hard_weight: float,
     protected_target_margin: float,
+    protected_runtime_weight: float,
+    protected_runtime_margin: float,
+    repetition_penalty: float,
     min_protected_top1: float,
     max_protected_nll_delta: float,
     margin_weight: float,
@@ -1171,6 +1177,13 @@ def run_sleep(
         protected_rows,
         protected_target_margin,
     )
+    before_protected_runtime = mean_runtime_replay_metrics(
+        model,
+        tokenizer,
+        protected_rows,
+        repetition_penalty,
+        protected_runtime_margin,
+    )
     confusers = capture_confusers(
         reference,
         tokenizer,
@@ -1210,7 +1223,7 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.16.9 /sleep")
+    print(" LLM_SEM v0.17.0 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
@@ -1222,6 +1235,9 @@ def run_sleep(
     print("Protected token wt   :", protected_token_weight)
     print("Protected hard wt    :", protected_hard_weight)
     print("Protected margin     :", protected_target_margin)
+    print("Protected runtime wt :", protected_runtime_weight)
+    print("Protected runtime mg :", protected_runtime_margin)
+    print("Repetition penalty   :", repetition_penalty)
     print("Min protected top1   :", min_protected_top1)
     print("Max protected dNLL   :", max_protected_nll_delta, "(diagnostic only)")
     print("Sequence margin wt   :", margin_weight)
@@ -1243,6 +1259,14 @@ def run_sleep(
     print(
         "Protected min margin : "
         f"{before_protected_token['min_margin']:+.6f}"
+    )
+    print(
+        "Protected runtime t1 : "
+        f"{before_protected_runtime['top1_ratio']:.1%}"
+    )
+    print(
+        "Protected runtime min: "
+        f"{before_protected_runtime['min_margin']:+.6f}"
     )
     before_token = mean_token_margin_metrics(
         model,
@@ -1274,6 +1298,7 @@ def run_sleep(
         total_token_margin = 0.0
         total_protected_nll = 0.0
         total_protected_token = 0.0
+        total_protected_runtime = 0.0
         total_kl = 0.0
 
         for item, confuser in zip(memory, confusers):
@@ -1341,6 +1366,18 @@ def run_sleep(
             protected_token_loss = torch.stack(
                 protected_token_losses
             ).mean()
+            (
+                protected_runtime_loss,
+                _protected_runtime_top1,
+                _protected_runtime_min,
+                _protected_runtime_mean,
+            ) = runtime_replay_margin_stats(
+                model,
+                tokenizer,
+                protected_rows,
+                repetition_penalty,
+                protected_runtime_margin,
+            )
 
             loss = (
                 target_loss
@@ -1348,6 +1385,7 @@ def run_sleep(
                 + token_margin_weight * token_margin_loss
                 + protected_nll_weight * protected_nll_loss
                 + protected_token_weight * protected_token_loss
+                + protected_runtime_weight * protected_runtime_loss
                 + lambda_kl * preserve_loss
             )
             loss.backward()
@@ -1367,6 +1405,7 @@ def run_sleep(
             total_token_margin += float(token_margin_loss.item())
             total_protected_nll += float(protected_nll_loss.item())
             total_protected_token += float(protected_token_loss.item())
+            total_protected_runtime += float(protected_runtime_loss.item())
             total_kl += float(preserve_loss.item())
 
         should_check = (
@@ -1408,6 +1447,13 @@ def run_sleep(
                 protected_rows,
                 protected_target_margin,
             )
+            protected_runtime_metrics = mean_runtime_replay_metrics(
+                model,
+                tokenizer,
+                protected_rows,
+                repetition_penalty,
+                protected_runtime_margin,
+            )
             token_metrics = mean_token_margin_metrics(
                 model,
                 tokenizer,
@@ -1433,11 +1479,14 @@ def run_sleep(
                 f"protected_min={protected_metrics['min_margin']:+.4f} "
                 f"protected_nll_loss={total_protected_nll / count:.6f} "
                 f"protected_token_loss={total_protected_token / count:.6f} "
+                f"protected_runtime_top1={protected_runtime_metrics['top1_ratio']:.1%} "
+                f"protected_runtime_min={protected_runtime_metrics['min_margin']:+.4f} "
+                f"protected_runtime_loss={total_protected_runtime / count:.6f} "
                 f"preserve_kl={total_kl / count:.6f} "
                 f"prompt_js={current_js:.6f}"
             )
 
-            # v0.16.9: choose the best multi-task checkpoint by canonical
+            # v0.17.0: choose the best multi-task checkpoint by canonical
             # progress.  Source-model JS is diagnostic only because the source
             # answers are known to be wrong for some protected prompts.
             progress_score = (
@@ -1445,8 +1494,10 @@ def run_sleep(
                 + current_protected_nll
                 + 5.0 * (1.0 - token_metrics["top1_ratio"])
                 + 5.0 * (1.0 - protected_metrics["top1_ratio"])
+                + 10.0 * (1.0 - protected_runtime_metrics["top1_ratio"])
                 + max(0.0, -token_metrics["min_margin"])
                 + max(0.0, -protected_metrics["min_margin"])
+                + 2.0 * max(0.0, -protected_runtime_metrics["min_margin"])
             )
             if progress_score < best_score:
                 best_score = progress_score
@@ -1470,6 +1521,8 @@ def run_sleep(
                 and token_metrics["min_margin"] >= target_token_margin
                 and protected_metrics["top1_ratio"] >= min_protected_top1
                 and protected_metrics["min_margin"] >= protected_target_margin
+                and protected_runtime_metrics["top1_ratio"] >= min_protected_top1
+                and protected_runtime_metrics["min_margin"] >= protected_runtime_margin
             ):
                 stop_reason = "NEW_AND_PROTECTED_CANONICAL_REACHED"
                 print(
@@ -1513,6 +1566,13 @@ def run_sleep(
         tokenizer,
         protected_rows,
         protected_target_margin,
+    )
+    after_protected_runtime = mean_runtime_replay_metrics(
+        model,
+        tokenizer,
+        protected_rows,
+        repetition_penalty,
+        protected_runtime_margin,
     )
     after_token = mean_token_margin_metrics(
         model,
@@ -1575,6 +1635,14 @@ def run_sleep(
     print(
         "Protected min margin : "
         f"{after_protected_token['min_margin']:+.6f}"
+    )
+    print(
+        "Protected runtime t1 : "
+        f"{after_protected_runtime['top1_ratio']:.1%}"
+    )
+    print(
+        "Protected runtime min: "
+        f"{after_protected_runtime['min_margin']:+.6f}"
     )
     print(f"Protected prompt JS  : {prompt_js:.6f}")
     print_hard_token_diagnostics(
@@ -1663,7 +1731,7 @@ def main():
     validate_protected_knowledge(protected_rows)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.16.9 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.17.0 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -1807,6 +1875,9 @@ def main():
                 protected_token_weight=args.sleep_protected_token_weight,
                 protected_hard_weight=args.sleep_protected_hard_weight,
                 protected_target_margin=args.sleep_protected_target_margin,
+                protected_runtime_weight=args.sleep_protected_runtime_weight,
+                protected_runtime_margin=args.sleep_protected_runtime_margin,
+                repetition_penalty=args.repetition_penalty,
                 min_protected_top1=args.sleep_min_protected_top1,
                 max_protected_nll_delta=args.sleep_max_protected_nll_delta,
                 margin_weight=args.sleep_margin_weight,
