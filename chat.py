@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.16.6 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.16.7 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -18,8 +18,8 @@ Commands
   - target: taught prompt/answer NLL
   - crossing: canonical-vs-pre-sleep-confuser sequence margin
   - greedy alignment: canonical token vs strongest local competitor margin
-  - preservation: prompt KL + source NLL replay + runtime-aligned greedy replay
-  - output: model/model-sem-sleep-v0166.pt
+  - preservation: validated canonical protected knowledge (NLL + token margin)
+  - output: model/model-sem-sleep-v0167.pt
   - memory remains on disk after sleep for auditability
 
 This is an experimental online internalization path.  It does not run the full
@@ -44,7 +44,8 @@ from tokenizer import Tokenizer
 DEFAULT_MODEL = "model/model-sem-internalized-v01575.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
-DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0166.pt"
+DEFAULT_PROTECTED = "data/protected_knowledge_v0167.jsonl"
+DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0167.pt"
 
 PROTECTED_PROMPTS = [
     "コンピュータとは",
@@ -66,11 +67,12 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.16.6 Chat + /sleep internalization"
+        description="LLM_SEM v0.16.7 Chat + /sleep internalization"
     )
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     p.add_argument("--memory", default=DEFAULT_MEMORY)
+    p.add_argument("--protected", default=DEFAULT_PROTECTED)
     p.add_argument("--sleep-output", default=DEFAULT_SLEEP_MODEL)
     p.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
     p.add_argument("--max-new-tokens", type=int, default=96)
@@ -78,17 +80,18 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.16.6 uses the decoder LR scale that actually crossed the boundary
+    # v0.16.7 uses the decoder LR scale that actually crossed the boundary
     # in v0.15.7.2, while monitoring preservation and stopping early.
     p.add_argument("--sleep-epochs", type=int, default=240)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--sleep-lr-lm-head", type=float, default=2.0e-4)
     p.add_argument("--sleep-kl", type=float, default=0.50)
-    p.add_argument("--sleep-replay-weight", type=float, default=0.50)
-    p.add_argument("--sleep-runtime-replay-weight", type=float, default=1.50)
-    p.add_argument("--sleep-runtime-replay-margin", type=float, default=0.05)
-    p.add_argument("--sleep-min-runtime-replay-top1", type=float, default=1.00)
-    p.add_argument("--sleep-max-replay-nll-delta", type=float, default=0.25)
+    p.add_argument("--sleep-protected-nll-weight", type=float, default=1.00)
+    p.add_argument("--sleep-protected-token-weight", type=float, default=1.50)
+    p.add_argument("--sleep-protected-hard-weight", type=float, default=1.00)
+    p.add_argument("--sleep-protected-target-margin", type=float, default=0.05)
+    p.add_argument("--sleep-min-protected-top1", type=float, default=1.00)
+    p.add_argument("--sleep-max-protected-nll-delta", type=float, default=0.25)
     p.add_argument("--sleep-margin-weight", type=float, default=1.00)
     p.add_argument("--sleep-target-margin", type=float, default=0.15)
     p.add_argument("--sleep-token-margin-weight", type=float, default=2.00)
@@ -110,7 +113,7 @@ def choose_device(name: str) -> torch.device:
     return torch.device(name)
 
 
-def load_memory(path: Path) -> List[Dict[str, str]]:
+def load_knowledge(path: Path) -> List[Dict[str, str]]:
     if not path.exists():
         return []
 
@@ -130,6 +133,19 @@ def load_memory(path: Path) -> List[Dict[str, str]]:
             if prompt and answer:
                 rows.append({"prompt": prompt, "answer": answer})
     return rows
+
+
+def validate_protected_knowledge(
+    rows: List[Dict[str, str]],
+) -> None:
+    required = {"CPUとは", "GPUとは"}
+    prompts = {row["prompt"] for row in rows}
+    missing = sorted(required - prompts)
+    if missing:
+        raise RuntimeError(
+            "Protected knowledge is missing required anchors: "
+            + ", ".join(missing)
+        )
 
 
 def append_memory(path: Path, prompt: str, answer: str) -> None:
@@ -764,9 +780,10 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.16.6",
+        "version": "v0.16.7",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
+        "protected_file": str(protected_path),
         "memory_count": memory_count,
         "epochs": epochs,
         "before_memory_nll": before_nll,
@@ -784,17 +801,20 @@ def run_sleep(
     tokenizer: Tokenizer,
     memory: List[Dict[str, str]],
     memory_path: Path,
+    protected_path: Path,
     source_path: Path,
     output_path: Path,
     epochs: int,
     lr_final_norm: float,
     lr_lm_head: float,
     lambda_kl: float,
-    replay_weight: float,
-    runtime_replay_weight: float,
-    runtime_replay_margin: float,
-    min_runtime_replay_top1: float,
-    max_replay_nll_delta: float,
+    protected_rows: List[Dict[str, str]],
+    protected_nll_weight: float,
+    protected_token_weight: float,
+    protected_hard_weight: float,
+    protected_target_margin: float,
+    min_protected_top1: float,
+    max_protected_nll_delta: float,
     margin_weight: float,
     target_margin: float,
     token_margin_weight: float,
@@ -823,15 +843,17 @@ def run_sleep(
         tokenizer,
         memory,
     )
-    replay_rows = capture_replay_targets(
-        reference,
+    validate_protected_knowledge(protected_rows)
+    before_protected_nll = mean_memory_nll(
+        model,
         tokenizer,
-        PROTECTED_PROMPTS,
+        protected_rows,
     )
-    before_replay_nll = mean_replay_nll(
-        reference,
+    before_protected_token = mean_token_margin_metrics(
+        model,
         tokenizer,
-        replay_rows,
+        protected_rows,
+        protected_target_margin,
     )
     confusers = capture_confusers(
         reference,
@@ -845,12 +867,6 @@ def run_sleep(
         confusers,
     )
 
-    print("SLEEP> captured source replay trajectories")
-    for item in replay_rows:
-        print(
-            f"  REPLAY prompt={item['prompt']!r} "
-            f"answer={item['answer']!r}"
-        )
     print("SLEEP> captured pre-sleep confusers")
     for index, (item, confuser) in enumerate(
         zip(memory, confusers), 1
@@ -878,18 +894,20 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.16.6 /sleep")
+    print(" LLM_SEM v0.16.7 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
     print("LR final_norm        :", lr_final_norm)
     print("LR lm_head           :", lr_lm_head)
     print("KL preservation      :", lambda_kl)
-    print("Replay NLL weight    :", replay_weight)
-    print("Runtime replay wt    :", runtime_replay_weight)
-    print("Runtime replay margin:", runtime_replay_margin)
-    print("Min replay top1      :", min_runtime_replay_top1)
-    print("Max replay NLL delta :", max_replay_nll_delta)
+    print("Protected entries    :", len(protected_rows))
+    print("Protected NLL wt     :", protected_nll_weight)
+    print("Protected token wt   :", protected_token_weight)
+    print("Protected hard wt    :", protected_hard_weight)
+    print("Protected margin     :", protected_target_margin)
+    print("Min protected top1   :", min_protected_top1)
+    print("Max protected dNLL   :", max_protected_nll_delta)
     print("Sequence margin wt   :", margin_weight)
     print("Sequence target      :", target_margin)
     print("Token margin wt      :", token_margin_weight)
@@ -901,21 +919,14 @@ def run_sleep(
     print("Check every          :", check_every)
     print("Trainable            : final_norm + lm_head")
     print(f"Memory NLL before    : {before_nll:.6f}")
-    print(f"Replay NLL before    : {before_replay_nll:.6f}")
-    before_runtime_replay = mean_runtime_replay_metrics(
-        model,
-        tokenizer,
-        replay_rows,
-        1.10,
-        runtime_replay_margin,
+    print(f"Protected NLL before : {before_protected_nll:.6f}")
+    print(
+        "Protected top1 before: "
+        f"{before_protected_token['top1_ratio']:.1%}"
     )
     print(
-        "Replay greedy before : "
-        f"{before_runtime_replay['top1_ratio']:.1%}"
-    )
-    print(
-        "Replay min margin    : "
-        f"{before_runtime_replay['min_margin']:+.6f}"
+        "Protected min margin : "
+        f"{before_protected_token['min_margin']:+.6f}"
     )
     before_token = mean_token_margin_metrics(
         model,
@@ -946,8 +957,8 @@ def run_sleep(
         total_target = 0.0
         total_margin = 0.0
         total_token_margin = 0.0
-        total_replay = 0.0
-        total_runtime_replay = 0.0
+        total_protected_nll = 0.0
+        total_protected_token = 0.0
         total_kl = 0.0
 
         for item, confuser in zip(memory, confusers):
@@ -992,30 +1003,36 @@ def run_sleep(
                 tokenizer,
                 PROTECTED_PROMPTS,
             )
-            source_replay_loss = replay_loss(
-                model,
-                tokenizer,
-                replay_rows,
-            )
-            (
-                runtime_replay_loss,
-                _runtime_replay_top1,
-                _runtime_replay_min,
-                _runtime_replay_mean,
-            ) = runtime_replay_margin_stats(
-                model,
-                tokenizer,
-                replay_rows,
-                1.10,
-                runtime_replay_margin,
-            )
+            protected_nll_loss = torch.stack([
+                continuation_nll(
+                    model,
+                    tokenizer,
+                    protected["prompt"],
+                    protected["answer"],
+                )
+                for protected in protected_rows
+            ]).mean()
+            protected_token_losses = [
+                canonical_token_margin_stats(
+                    model,
+                    tokenizer,
+                    protected["prompt"],
+                    protected["answer"],
+                    protected_target_margin,
+                    protected_hard_weight,
+                )[0]
+                for protected in protected_rows
+            ]
+            protected_token_loss = torch.stack(
+                protected_token_losses
+            ).mean()
 
             loss = (
                 target_loss
                 + margin_weight * margin_loss
                 + token_margin_weight * token_margin_loss
-                + replay_weight * source_replay_loss
-                + runtime_replay_weight * runtime_replay_loss
+                + protected_nll_weight * protected_nll_loss
+                + protected_token_weight * protected_token_loss
                 + lambda_kl * preserve_loss
             )
             loss.backward()
@@ -1033,8 +1050,8 @@ def run_sleep(
             total_target += float(target_loss.item())
             total_margin += float(margin_loss.item())
             total_token_margin += float(token_margin_loss.item())
-            total_replay += float(source_replay_loss.item())
-            total_runtime_replay += float(runtime_replay_loss.item())
+            total_protected_nll += float(protected_nll_loss.item())
+            total_protected_token += float(protected_token_loss.item())
             total_kl += float(preserve_loss.item())
 
         should_check = (
@@ -1062,18 +1079,19 @@ def run_sleep(
                 memory,
                 confusers,
             )
-            current_replay_nll = mean_replay_nll(
+            current_protected_nll = mean_memory_nll(
                 model,
                 tokenizer,
-                replay_rows,
+                protected_rows,
             )
-            replay_delta = current_replay_nll - before_replay_nll
-            runtime_replay_metrics = mean_runtime_replay_metrics(
+            protected_delta = (
+                current_protected_nll - before_protected_nll
+            )
+            protected_metrics = mean_token_margin_metrics(
                 model,
                 tokenizer,
-                replay_rows,
-                1.10,
-                runtime_replay_margin,
+                protected_rows,
+                protected_target_margin,
             )
             token_metrics = mean_token_margin_metrics(
                 model,
@@ -1094,20 +1112,21 @@ def run_sleep(
                 f"token_top1={token_metrics['top1_ratio']:.1%} "
                 f"token_min={token_metrics['min_margin']:+.4f} "
                 f"token_loss={total_token_margin / count:.6f} "
-                f"replay_nll={current_replay_nll:.6f} "
-                f"replay_delta={replay_delta:+.6f} "
-                f"replay_loss={total_replay / count:.6f} "
-                f"replay_top1={runtime_replay_metrics['top1_ratio']:.1%} "
-                f"replay_min={runtime_replay_metrics['min_margin']:+.4f} "
-                f"runtime_replay_loss={total_runtime_replay / count:.6f} "
+                f"protected_nll={current_protected_nll:.6f} "
+                f"protected_delta={protected_delta:+.6f} "
+                f"protected_top1={protected_metrics['top1_ratio']:.1%} "
+                f"protected_min={protected_metrics['min_margin']:+.4f} "
+                f"protected_nll_loss={total_protected_nll / count:.6f} "
+                f"protected_token_loss={total_protected_token / count:.6f} "
                 f"preserve_kl={total_kl / count:.6f} "
                 f"prompt_js={current_js:.6f}"
             )
 
             if (
                 current_js <= max_prompt_js
-                and replay_delta <= max_replay_nll_delta
-                and runtime_replay_metrics["top1_ratio"] >= min_runtime_replay_top1
+                and protected_delta <= max_protected_nll_delta
+                and protected_metrics["top1_ratio"] >= min_protected_top1
+                and protected_metrics["min_margin"] >= 0.0
                 and current_nll < best_nll
             ):
                 best_nll = current_nll
@@ -1117,11 +1136,11 @@ def run_sleep(
 
             if (
                 current_js > max_prompt_js
-                or replay_delta > max_replay_nll_delta
+                or protected_delta > max_protected_nll_delta
             ):
                 stop_reason = "PRESERVATION_LIMIT"
                 print(
-                    "SLEEP> preservation/replay limit reached; "
+                    "SLEEP> preservation/protected limit reached; "
                     "restoring best safe checkpoint"
                 )
                 break
@@ -1131,9 +1150,9 @@ def run_sleep(
                 and current_margin >= target_margin
                 and token_metrics["top1_ratio"] >= min_token_top1
                 and token_metrics["min_margin"] >= target_token_margin
-                and replay_delta <= max_replay_nll_delta
-                and runtime_replay_metrics["top1_ratio"] >= min_runtime_replay_top1
-                and runtime_replay_metrics["min_margin"] >= 0.0
+                and protected_delta <= max_protected_nll_delta
+                and protected_metrics["top1_ratio"] >= min_protected_top1
+                and protected_metrics["min_margin"] >= protected_target_margin
             ):
                 stop_reason = "GREEDY_CANONICAL_TARGET_REACHED"
                 print(
@@ -1164,18 +1183,19 @@ def run_sleep(
         tokenizer,
         PROTECTED_PROMPTS,
     )
-    after_replay_nll = mean_replay_nll(
+    after_protected_nll = mean_memory_nll(
         model,
         tokenizer,
-        replay_rows,
+        protected_rows,
     )
-    replay_delta = after_replay_nll - before_replay_nll
-    after_runtime_replay = mean_runtime_replay_metrics(
+    protected_delta = (
+        after_protected_nll - before_protected_nll
+    )
+    after_protected_token = mean_token_margin_metrics(
         model,
         tokenizer,
-        replay_rows,
-        1.10,
-        runtime_replay_margin,
+        protected_rows,
+        protected_target_margin,
     )
     after_token = mean_token_margin_metrics(
         model,
@@ -1190,6 +1210,7 @@ def run_sleep(
         source_checkpoint=checkpoint,
         source_path=source_path,
         memory_path=memory_path,
+        protected_path=protected_path,
         memory_count=len(memory),
         epochs=best_epoch,
         before_nll=before_nll,
@@ -1226,21 +1247,17 @@ def run_sleep(
         f"{after_token['mean_margin']:+.6f}"
     )
     print(
-        f"Replay NLL           : "
-        f"{before_replay_nll:.6f} -> {after_replay_nll:.6f}"
+        f"Protected NLL        : "
+        f"{before_protected_nll:.6f} -> {after_protected_nll:.6f}"
     )
-    print(f"Replay NLL delta     : {replay_delta:+.6f}")
+    print(f"Protected NLL delta  : {protected_delta:+.6f}")
     print(
-        "Replay greedy top1   : "
-        f"{after_runtime_replay['top1_ratio']:.1%}"
-    )
-    print(
-        "Replay min margin    : "
-        f"{after_runtime_replay['min_margin']:+.6f}"
+        "Protected token top1 : "
+        f"{after_protected_token['top1_ratio']:.1%}"
     )
     print(
-        "Replay mean margin   : "
-        f"{after_runtime_replay['mean_margin']:+.6f}"
+        "Protected min margin : "
+        f"{after_protected_token['min_margin']:+.6f}"
     )
     print(f"Protected prompt JS  : {prompt_js:.6f}")
     print_hard_token_diagnostics(
@@ -1297,6 +1314,7 @@ def main():
     model_path = Path(args.model)
     tokenizer_path = Path(args.tokenizer)
     memory_path = Path(args.memory)
+    protected_path = Path(args.protected)
     sleep_output = Path(args.sleep_output)
 
     if not model_path.exists():
@@ -1315,10 +1333,12 @@ def main():
     model.eval()
 
     current_model_path = model_path
-    memory = load_memory(memory_path)
+    memory = load_knowledge(memory_path)
+    protected_rows = load_knowledge(protected_path)
+    validate_protected_knowledge(protected_rows)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.16.6 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.16.7 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -1329,6 +1349,8 @@ def main():
     print("Context length  :", model.context_length)
     print("Semantic memory :", memory_path)
     print("Memory entries  :", len(memory))
+    print("Protected file  :", protected_path)
+    print("Protected count :", len(protected_rows))
     print("Sleep output    :", sleep_output)
     print()
     print("Commands: /teach, /memory, /sleep, /model, /reload, /help, /quit")
@@ -1352,7 +1374,7 @@ def main():
             continue
 
         if raw == "/memory":
-            memory = load_memory(memory_path)
+            memory = load_knowledge(memory_path)
             if not memory:
                 print("MEM> empty")
             else:
@@ -1378,7 +1400,7 @@ def main():
                 continue
 
             append_memory(memory_path, prompt, answer)
-            memory = load_memory(memory_path)
+            memory = load_knowledge(memory_path)
             print(
                 f"MEM> stored #{len(memory)}: "
                 f"{prompt} => {answer}"
@@ -1397,24 +1419,27 @@ def main():
                     print("SLEEP> usage: /sleep [positive_epoch_count]")
                     continue
 
-            memory = load_memory(memory_path)
+            memory = load_knowledge(memory_path)
             model, checkpoint, current_model_path = run_sleep(
                 model=model,
                 checkpoint=checkpoint,
                 tokenizer=tokenizer,
                 memory=memory,
                 memory_path=memory_path,
+                protected_path=protected_path,
                 source_path=current_model_path,
                 output_path=sleep_output,
                 epochs=epochs,
                 lr_final_norm=args.sleep_lr_final_norm,
                 lr_lm_head=args.sleep_lr_lm_head,
                 lambda_kl=args.sleep_kl,
-                replay_weight=args.sleep_replay_weight,
-                runtime_replay_weight=args.sleep_runtime_replay_weight,
-                runtime_replay_margin=args.sleep_runtime_replay_margin,
-                min_runtime_replay_top1=args.sleep_min_runtime_replay_top1,
-                max_replay_nll_delta=args.sleep_max_replay_nll_delta,
+                protected_rows=protected_rows,
+                protected_nll_weight=args.sleep_protected_nll_weight,
+                protected_token_weight=args.sleep_protected_token_weight,
+                protected_hard_weight=args.sleep_protected_hard_weight,
+                protected_target_margin=args.sleep_protected_target_margin,
+                min_protected_top1=args.sleep_min_protected_top1,
+                max_protected_nll_delta=args.sleep_max_protected_nll_delta,
                 margin_weight=args.sleep_margin_weight,
                 target_margin=args.sleep_target_margin,
                 token_margin_weight=args.sleep_token_margin_weight,
