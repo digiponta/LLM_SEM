@@ -21,14 +21,14 @@ from adaptive_semantic_learning import (
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.54 diagnostic-era audited sleep consolidation"
+        description="LLM_SEM v0.10.55 prefix-weighted audited sleep consolidation"
     )
     p.add_argument("--memory", default="data/semantic_memory.jsonl")
     p.add_argument("--model", required=True)
     p.add_argument("--tokenizer", default="model/tokenizer.json")
     p.add_argument("--benchmark", default="my_benchmark.csv")
-    p.add_argument("--candidate", default="model/model-sem-sleep-v0154.pt")
-    p.add_argument("--semantic-candidate", default="model/model-sem-sleep-sem-v0154.pt")
+    p.add_argument("--candidate", default="model/model-sem-sleep-v0155.pt")
+    p.add_argument("--semantic-candidate", default="model/model-sem-sleep-sem-v0155.pt")
     p.add_argument("--manifest", default="model/active-model.json")
     p.add_argument("--base-answer-memory", default="data/semantic_guided_qa_v097.json")
     p.add_argument("--learned-answer-memory", default="data/semantic_answer_memory_learned.jsonl")
@@ -201,7 +201,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.54 Proposition Learning Diagnostic")
+    print(" LLM_SEM v0.10.55 Prefix-Weighted Proposition Learning")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
