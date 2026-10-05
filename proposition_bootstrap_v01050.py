@@ -19,7 +19,7 @@ from tokenizer import Tokenizer
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.52 Runtime-Aligned Proposition Bootstrap"
+        description="LLM_SEM v0.10.53 Audited Runtime-Aligned Proposition Bootstrap"
     )
     p.add_argument("--source", required=True)
     p.add_argument("--incremental-dataset", required=True)
@@ -156,7 +156,7 @@ def save_dataset(
     path.write_text(
         json.dumps(
             {
-                "version": "v0.10.52",
+                "version": "v0.10.53",
                 "mode": mode,
                 "samples": rows,
             },
@@ -172,6 +172,11 @@ def run(cmd: list[str]) -> int:
     return subprocess.run(cmd, check=False).returncode
 
 
+def remove_stale(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+
+
 def train(
     args,
     source: Path,
@@ -182,6 +187,10 @@ def train(
     epochs: int,
     new_weight: float,
 ) -> bool:
+    remove_stale(result_json)
+    if output.exists():
+        output.unlink()
+
     cmd = [
         sys.executable,
         "semantic_guided_answer_finetune_v097.py",
@@ -205,7 +214,14 @@ def train(
     ]
     if args.allow_cpu:
         cmd.append("--allow-cpu")
-    return run(cmd) == 0
+    code = run(cmd)
+    if code != 0:
+        return False
+    if not result_json.exists():
+        raise RuntimeError(f"training result missing: {result_json}")
+    if not output.exists():
+        raise RuntimeError(f"training checkpoint missing: {output}")
+    return True
 
 
 def full_runtime_metrics(
@@ -226,6 +242,7 @@ def full_runtime_metrics(
     ]
     if args.allow_cpu:
         cmd.append("--allow-cpu")
+    remove_stale(result_json)
     run(cmd)
     if not result_json.exists():
         raise RuntimeError(f"runtime result missing: {result_json}")
