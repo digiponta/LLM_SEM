@@ -22,7 +22,7 @@ from tokenizer import Tokenizer
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.55 Prefix-Weighted Proposition Diagnostic"
+        description="LLM_SEM v0.10.56 First-Divergence Proposition Diagnostic"
     )
     p.add_argument(
         "--source",
@@ -37,7 +37,7 @@ def parse_args():
     p.add_argument("--tokenizer", default="model/tokenizer.json")
     p.add_argument(
         "--output",
-        default="model/model-sem-diagnostic-v0155.pt",
+        default="model/model-sem-diagnostic-v0156.pt",
     )
     p.add_argument("--epochs", type=int, default=140)
     p.add_argument("--learning-rate", type=float, default=5e-6)
@@ -236,6 +236,8 @@ def main():
         str(args.protected_distill_weight),
         "--new-knowledge-weight",
         str(args.new_knowledge_weight),
+        "--first-divergence-weight", "2.0",
+        "--first-divergence-margin", "1.0",
         "--train-blocks", str(args.train_blocks),
         "--min-generation-sim", "0.0",
         "--result-json", str(train_json),
@@ -398,7 +400,7 @@ def main():
     summary.write_text(
         json.dumps(
             {
-                "version": "v0.10.55",
+                "version": "v0.10.56",
                 "concept": args.concept,
                 "source": str(source),
                 "candidate": str(output),
