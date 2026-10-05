@@ -201,7 +201,7 @@ def main() -> None:
         return
 
     print("=" * 96)
-    print(" LLM_SEM v0.10.51 Natural-Query Proposition Sleep")
+    print(" LLM_SEM v0.10.52 Runtime-Aligned Proposition Sleep")
     print("=" * 96)
     print("Source model       :", source)
     print("Final candidate    :", final_candidate)
@@ -489,7 +489,7 @@ def main() -> None:
                     "--manifest", args.manifest,
                     "--retention-pass",
                     "--note",
-                    "v0.10.51 NATURAL-QUERY PROPOSITION PARTIAL commit",
+                    "v0.10.52 RUNTIME-ALIGNED PROPOSITION PARTIAL commit",
                 ]
                 if args.allow_cpu:
                     partial_promote_cmd.append("--allow-cpu")
@@ -923,7 +923,7 @@ def main() -> None:
         "--candidate", str(final_candidate),
         "--manifest", args.manifest,
         "--retention-pass",
-        "--note", "v0.10.51 complete natural-query proposition retention",
+        "--note", "v0.10.52 complete runtime-aligned proposition retention",
     ]
     if args.allow_cpu:
         promote_cmd.append("--allow-cpu")
