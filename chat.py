@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.17.3 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.17.4 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -22,7 +22,7 @@ Commands
   - greedy alignment: canonical token vs strongest local competitor margin
   - retention/correction: validated protected knowledge
     (NLL + teacher-forced margin + runtime-aligned greedy margin)
-  - output: model/model-sem-sleep-v0173.pt
+  - output: model/model-sem-sleep-v0174.pt
   - memory remains on disk after sleep for auditability
 
 This is an experimental online internalization path.  It does not run the full
@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import unicodedata
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -48,9 +49,9 @@ DEFAULT_BASE_MODEL = "model/model-sem-internalized-v01575.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
 DEFAULT_PROTECTED = "data/protected_knowledge_v0167.jsonl"
-DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0173.pt"
-DEFAULT_REPAIR_MODEL = "model/model-sem-canonical-base-v0173.pt"
-DEFAULT_MODEL_STATE = "data/runtime_model_state_v0173.json"
+DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0174.pt"
+DEFAULT_REPAIR_MODEL = "model/model-sem-canonical-base-v0174.pt"
+DEFAULT_MODEL_STATE = "data/runtime_model_state_v0174.json"
 
 PROTECTED_PROMPTS = [
     "コンピュータとは",
@@ -72,13 +73,13 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.17.3 Chat + /sleep internalization"
+        description="LLM_SEM v0.17.4 Chat + /sleep internalization"
     )
     p.add_argument(
         "--model",
         default=None,
         help=(
-            "Explicit startup checkpoint. If omitted, v0.17.3 restores the "
+            "Explicit startup checkpoint. If omitted, v0.17.4 restores the "
             "last persisted live model."
         ),
     )
@@ -94,7 +95,7 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.17.3 treats validated protected knowledge as authoritative
+    # v0.17.4 treats validated protected knowledge as authoritative
     # multi-task supervision, not as a source-model preservation constraint.
     p.add_argument("--sleep-epochs", type=int, default=600)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
@@ -121,7 +122,7 @@ def parse_args():
     p.add_argument("--sleep-max-prompt-js", type=float, default=0.08)
     p.add_argument("--sleep-check-every", type=int, default=10)
 
-    # v0.17.3 Phase A: repair the validated canonical base first.
+    # v0.17.4 Phase A: repair the validated canonical base first.
     p.add_argument("--repair-epochs", type=int, default=1600)
     p.add_argument("--repair-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--repair-lr-lm-head", type=float, default=2.0e-4)
@@ -143,7 +144,7 @@ def save_runtime_model_state(
 ) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "version": "v0.17.3",
+        "version": "v0.17.4",
         "model": str(model_path),
         "source": source,
     }
@@ -229,6 +230,21 @@ def append_memory(path: Path, prompt: str, answer: str) -> None:
     item = {"prompt": prompt, "answer": answer}
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+RUNTIME_TRAILING_PUNCTUATION = "、，,。．.!！?？:：;；"
+
+
+def normalize_runtime_prompt(text: str) -> str:
+    """Normalize harmless surface variants before runtime generation.
+
+    Training/protected prompts are stored without sentence-final punctuation.
+    Keep the semantic content intact while removing only trailing punctuation
+    and normalizing Unicode width/compatibility forms.
+    """
+    normalized = unicodedata.normalize("NFKC", text).strip()
+    normalized = normalized.rstrip(RUNTIME_TRAILING_PUNCTUATION).strip()
+    return normalized
 
 
 def encode_prompt(tokenizer: Tokenizer, text: str) -> List[int]:
@@ -880,7 +896,7 @@ def save_repair_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["repair"] = {
-        "version": "v0.17.3",
+        "version": "v0.17.4",
         "source_checkpoint": str(source_path),
         "protected_file": str(protected_path),
         "protected_count": protected_count,
@@ -952,7 +968,7 @@ def run_repair(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.3 /repair - Canonical Base Repair")
+    print(" LLM_SEM v0.17.4 /repair - Canonical Base Repair")
     print("=" * 72)
     print("Protected entries    :", len(protected_rows))
     print("Epochs               :", epochs)
@@ -1206,7 +1222,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.17.3",
+        "version": "v0.17.4",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "protected_file": str(protected_path),
@@ -1331,7 +1347,7 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.3 /sleep")
+    print(" LLM_SEM v0.17.4 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
@@ -1594,7 +1610,7 @@ def run_sleep(
                 f"prompt_js={current_js:.6f}"
             )
 
-            # v0.17.3: choose the best multi-task checkpoint by canonical
+            # v0.17.4: choose the best multi-task checkpoint by canonical
             # progress.  Source-model JS is diagnostic only because the source
             # answers are known to be wrong for some protected prompts.
             progress_score = (
@@ -1848,7 +1864,7 @@ def main():
     validate_protected_knowledge(protected_rows)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.17.3 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.17.4 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -2059,10 +2075,17 @@ def main():
             print("MODEL> reloaded", current_model_path)
             continue
 
+        runtime_prompt = normalize_runtime_prompt(raw)
+        if not runtime_prompt:
+            print("LLM> empty prompt after normalization")
+            continue
+        if runtime_prompt != raw:
+            print(f"NORM> {raw!r} -> {runtime_prompt!r}")
+
         answer = generate_answer(
             model=model,
             tokenizer=tokenizer,
-            prompt=raw,
+            prompt=runtime_prompt,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
             top_k=args.top_k,
