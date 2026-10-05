@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.16.8 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.16.9 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -9,6 +9,7 @@ Commands
 /teach <prompt> => <answer>
 /memory
 /protected
+/repair [epochs]
 /sleep [epochs]
 /model
 /reload
@@ -20,7 +21,7 @@ Commands
   - crossing: canonical-vs-pre-sleep-confuser sequence margin
   - greedy alignment: canonical token vs strongest local competitor margin
   - retention/correction: validated protected knowledge (NLL + token margin)
-  - output: model/model-sem-sleep-v0168.pt
+  - output: model/model-sem-sleep-v0169.pt
   - memory remains on disk after sleep for auditability
 
 This is an experimental online internalization path.  It does not run the full
@@ -46,7 +47,8 @@ DEFAULT_MODEL = "model/model-sem-internalized-v01575.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
 DEFAULT_PROTECTED = "data/protected_knowledge_v0167.jsonl"
-DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0168.pt"
+DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0169.pt"
+DEFAULT_REPAIR_MODEL = "model/model-sem-canonical-base-v0169.pt"
 
 PROTECTED_PROMPTS = [
     "コンピュータとは",
@@ -68,20 +70,21 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.16.8 Chat + /sleep internalization"
+        description="LLM_SEM v0.16.9 Chat + /sleep internalization"
     )
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     p.add_argument("--memory", default=DEFAULT_MEMORY)
     p.add_argument("--protected", default=DEFAULT_PROTECTED)
     p.add_argument("--sleep-output", default=DEFAULT_SLEEP_MODEL)
+    p.add_argument("--repair-output", default=DEFAULT_REPAIR_MODEL)
     p.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
     p.add_argument("--max-new-tokens", type=int, default=96)
     p.add_argument("--temperature", type=float, default=0.0)
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.16.8 treats validated protected knowledge as authoritative
+    # v0.16.9 treats validated protected knowledge as authoritative
     # multi-task supervision, not as a source-model preservation constraint.
     p.add_argument("--sleep-epochs", type=int, default=600)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
@@ -105,6 +108,15 @@ def parse_args():
     p.add_argument("--sleep-min-nll-gain", type=float, default=0.50)
     p.add_argument("--sleep-max-prompt-js", type=float, default=0.08)
     p.add_argument("--sleep-check-every", type=int, default=10)
+
+    # v0.16.9 Phase A: repair the validated canonical base first.
+    p.add_argument("--repair-epochs", type=int, default=800)
+    p.add_argument("--repair-lr-final-norm", type=float, default=5.0e-4)
+    p.add_argument("--repair-lr-lm-head", type=float, default=2.0e-4)
+    p.add_argument("--repair-nll-weight", type=float, default=1.0)
+    p.add_argument("--repair-runtime-weight", type=float, default=4.0)
+    p.add_argument("--repair-runtime-margin", type=float, default=0.10)
+    p.add_argument("--repair-check-every", type=int, default=10)
     return p.parse_args()
 
 
@@ -765,6 +777,285 @@ def freeze_for_sleep(model: LanguageModel) -> None:
         parameter.requires_grad = True
 
 
+def save_repair_checkpoint(
+    output: Path,
+    model: LanguageModel,
+    source_checkpoint: Dict[str, object],
+    source_path: Path,
+    protected_path: Path,
+    protected_count: int,
+    epochs: int,
+    before_nll: float,
+    after_nll: float,
+    runtime_top1: float,
+    runtime_min_margin: float,
+) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    checkpoint = dict(source_checkpoint)
+    checkpoint["model_state_dict"] = model.state_dict()
+    checkpoint["loss"] = after_nll
+    checkpoint["repair"] = {
+        "version": "v0.16.9",
+        "source_checkpoint": str(source_path),
+        "protected_file": str(protected_path),
+        "protected_count": protected_count,
+        "epochs": epochs,
+        "before_protected_nll": before_nll,
+        "after_protected_nll": after_nll,
+        "runtime_top1": runtime_top1,
+        "runtime_min_margin": runtime_min_margin,
+        "trainable": ["final_norm", "lm_head"],
+        "status": "CANONICAL_BASE_CANDIDATE",
+    }
+    torch.save(checkpoint, output)
+
+
+def run_repair(
+    model: LanguageModel,
+    checkpoint: Dict[str, object],
+    tokenizer: Tokenizer,
+    protected_rows: List[Dict[str, str]],
+    protected_path: Path,
+    source_path: Path,
+    output_path: Path,
+    epochs: int,
+    lr_final_norm: float,
+    lr_lm_head: float,
+    nll_weight: float,
+    runtime_weight: float,
+    runtime_margin: float,
+    repetition_penalty: float,
+    clip_grad: float,
+    check_every: int,
+) -> Tuple[LanguageModel, Dict[str, object], Path]:
+    validate_protected_knowledge(protected_rows)
+    device = next(model.parameters()).device
+
+    before_nll = mean_memory_nll(
+        model,
+        tokenizer,
+        protected_rows,
+    )
+    before_runtime = mean_runtime_replay_metrics(
+        model,
+        tokenizer,
+        protected_rows,
+        repetition_penalty,
+        runtime_margin,
+    )
+
+    freeze_for_sleep(model)
+
+    optimizer = torch.optim.AdamW(
+        [
+            {
+                "params": list(model.final_norm.parameters()),
+                "lr": lr_final_norm,
+            },
+            {
+                "params": list(model.lm_head.parameters()),
+                "lr": lr_lm_head,
+            },
+        ],
+        weight_decay=0.0,
+    )
+
+    print()
+    print("=" * 72)
+    print(" LLM_SEM v0.16.9 /repair - Canonical Base Repair")
+    print("=" * 72)
+    print("Protected entries    :", len(protected_rows))
+    print("Epochs               :", epochs)
+    print("LR final_norm        :", lr_final_norm)
+    print("LR lm_head           :", lr_lm_head)
+    print("NLL weight           :", nll_weight)
+    print("Runtime margin wt    :", runtime_weight)
+    print("Runtime target margin:", runtime_margin)
+    print("Repetition penalty   :", repetition_penalty)
+    print("Trainable            : final_norm + lm_head")
+    print(f"Protected NLL before : {before_nll:.6f}")
+    print(
+        "Runtime top1 before  : "
+        f"{before_runtime['top1_ratio']:.1%}"
+    )
+    print(
+        "Runtime min before   : "
+        f"{before_runtime['min_margin']:+.6f}"
+    )
+    print()
+
+    best_state = copy.deepcopy(model.state_dict())
+    best_score = (
+        before_nll
+        + 10.0 * (1.0 - before_runtime["top1_ratio"])
+        + max(0.0, -before_runtime["min_margin"])
+    )
+    best_epoch = 0
+    stop_reason = "MAX_EPOCHS"
+
+    for epoch in range(1, epochs + 1):
+        model.train()
+        optimizer.zero_grad(set_to_none=True)
+
+        nll_loss = torch.stack([
+            continuation_nll(
+                model,
+                tokenizer,
+                item["prompt"],
+                item["answer"],
+            )
+            for item in protected_rows
+        ]).mean()
+
+        (
+            runtime_loss,
+            _runtime_top1,
+            _runtime_min,
+            _runtime_mean,
+        ) = runtime_replay_margin_stats(
+            model,
+            tokenizer,
+            protected_rows,
+            repetition_penalty,
+            runtime_margin,
+        )
+
+        loss = (
+            nll_weight * nll_loss
+            + runtime_weight * runtime_loss
+        )
+        loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(
+            [
+                p
+                for p in model.parameters()
+                if p.requires_grad
+            ],
+            clip_grad,
+        )
+        optimizer.step()
+
+        should_check = (
+            epoch == 1
+            or epoch == epochs
+            or epoch % max(1, check_every) == 0
+        )
+        if not should_check:
+            continue
+
+        model.eval()
+        current_nll = mean_memory_nll(
+            model,
+            tokenizer,
+            protected_rows,
+        )
+        runtime_metrics = mean_runtime_replay_metrics(
+            model,
+            tokenizer,
+            protected_rows,
+            repetition_penalty,
+            runtime_margin,
+        )
+
+        print(
+            f"epoch={epoch:3d}/{epochs} "
+            f"protected_nll={current_nll:.6f} "
+            f"runtime_top1={runtime_metrics['top1_ratio']:.1%} "
+            f"runtime_min={runtime_metrics['min_margin']:+.4f} "
+            f"runtime_mean={runtime_metrics['mean_margin']:+.4f} "
+            f"runtime_loss={float(runtime_loss.item()):.6f}"
+        )
+
+        score = (
+            current_nll
+            + 10.0 * (1.0 - runtime_metrics["top1_ratio"])
+            + max(0.0, -runtime_metrics["min_margin"])
+        )
+        if score < best_score:
+            best_score = score
+            best_epoch = epoch
+            best_state = copy.deepcopy(model.state_dict())
+
+        if (
+            runtime_metrics["top1_ratio"] >= 1.0
+            and runtime_metrics["min_margin"] >= runtime_margin
+        ):
+            stop_reason = "CANONICAL_BASE_REPAIRED"
+            best_epoch = epoch
+            best_state = copy.deepcopy(model.state_dict())
+            print(
+                "REPAIR> all protected canonical tokens are greedy-safe; "
+                "stopping"
+            )
+            break
+
+    model.load_state_dict(best_state)
+    model.eval()
+
+    after_nll = mean_memory_nll(
+        model,
+        tokenizer,
+        protected_rows,
+    )
+    after_runtime = mean_runtime_replay_metrics(
+        model,
+        tokenizer,
+        protected_rows,
+        repetition_penalty,
+        runtime_margin,
+    )
+
+    save_repair_checkpoint(
+        output=output_path,
+        model=model,
+        source_checkpoint=checkpoint,
+        source_path=source_path,
+        protected_path=protected_path,
+        protected_count=len(protected_rows),
+        epochs=best_epoch,
+        before_nll=before_nll,
+        after_nll=after_nll,
+        runtime_top1=after_runtime["top1_ratio"],
+        runtime_min_margin=after_runtime["min_margin"],
+    )
+
+    reloaded, new_checkpoint = LanguageModel.load_checkpoint(
+        str(output_path),
+        device=device,
+    )
+    reloaded.eval()
+
+    print()
+    print("REPAIR RESULT")
+    print("-" * 72)
+    print(
+        f"Protected NLL        : "
+        f"{before_nll:.6f} -> {after_nll:.6f}"
+    )
+    print(
+        "Runtime greedy top1  : "
+        f"{after_runtime['top1_ratio']:.1%}"
+    )
+    print(
+        "Runtime min margin   : "
+        f"{after_runtime['min_margin']:+.6f}"
+    )
+    print(
+        "Runtime mean margin  : "
+        f"{after_runtime['mean_margin']:+.6f}"
+    )
+    print("Selected epoch       :", best_epoch)
+    print("Stop reason          :", stop_reason)
+    print("Canonical base       :", output_path)
+    print("Status               : CANONICAL_BASE_CANDIDATE")
+    print()
+
+    return reloaded, new_checkpoint, output_path
+
+
+
 def save_sleep_checkpoint(
     output: Path,
     model: LanguageModel,
@@ -784,7 +1075,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.16.8",
+        "version": "v0.16.9",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "protected_file": str(protected_path),
@@ -898,7 +1189,7 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.16.8 /sleep")
+    print(" LLM_SEM v0.16.9 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
@@ -1125,7 +1416,7 @@ def run_sleep(
                 f"prompt_js={current_js:.6f}"
             )
 
-            # v0.16.8: choose the best multi-task checkpoint by canonical
+            # v0.16.9: choose the best multi-task checkpoint by canonical
             # progress.  Source-model JS is diagnostic only because the source
             # answers are known to be wrong for some protected prompts.
             progress_score = (
@@ -1294,7 +1585,11 @@ Commands:
       Show current Semantic Memory.
 
   /protected
-      Show validated canonical knowledge that /sleep must preserve.
+      Show validated canonical knowledge.
+
+  /repair [epochs]
+      Phase A: repair the model using protected canonical knowledge only.
+      Saves model-sem-canonical-base-v0169.pt and makes it the live model.
 
   /sleep [epochs]
       Internalize current Semantic Memory into final_norm + lm_head.
@@ -1324,6 +1619,7 @@ def main():
     memory_path = Path(args.memory)
     protected_path = Path(args.protected)
     sleep_output = Path(args.sleep_output)
+    repair_output = Path(args.repair_output)
 
     if not model_path.exists():
         raise FileNotFoundError(
@@ -1346,7 +1642,7 @@ def main():
     validate_protected_knowledge(protected_rows)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.16.8 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.16.9 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -1360,9 +1656,10 @@ def main():
     print("Protected file  :", protected_path)
     print("Protected count :", len(protected_rows))
     print("Sleep output    :", sleep_output)
+    print("Repair output   :", repair_output)
     print()
     print(
-        "Commands: /teach, /memory, /protected, /sleep, "
+        "Commands: /teach, /memory, /protected, /repair, /sleep, "
         "/model, /reload, /help, /quit"
     )
     print()
@@ -1426,6 +1723,38 @@ def main():
             )
             continue
 
+        if raw.startswith("/repair"):
+            tail = raw[len("/repair"):].strip()
+            epochs = args.repair_epochs
+            if tail:
+                try:
+                    epochs = int(tail)
+                    if epochs <= 0:
+                        raise ValueError
+                except ValueError:
+                    print("REPAIR> usage: /repair [positive_epoch_count]")
+                    continue
+
+            model, checkpoint, current_model_path = run_repair(
+                model=model,
+                checkpoint=checkpoint,
+                tokenizer=tokenizer,
+                protected_rows=protected_rows,
+                protected_path=protected_path,
+                source_path=current_model_path,
+                output_path=repair_output,
+                epochs=epochs,
+                lr_final_norm=args.repair_lr_final_norm,
+                lr_lm_head=args.repair_lr_lm_head,
+                nll_weight=args.repair_nll_weight,
+                runtime_weight=args.repair_runtime_weight,
+                runtime_margin=args.repair_runtime_margin,
+                repetition_penalty=args.repetition_penalty,
+                clip_grad=args.sleep_clip_grad,
+                check_every=args.repair_check_every,
+            )
+            continue
+
         if raw.startswith("/sleep"):
             tail = raw[len("/sleep"):].strip()
             epochs = args.sleep_epochs
@@ -1475,12 +1804,22 @@ def main():
         if raw == "/model":
             print("MODEL>", current_model_path)
             sleep_meta = checkpoint.get("sleep")
+            repair_meta = checkpoint.get("repair")
             promotion_meta = checkpoint.get("promotion")
             if promotion_meta:
                 print(
                     "MODEL> promotion=",
                     promotion_meta.get("status"),
                     promotion_meta.get("version"),
+                )
+            if repair_meta:
+                print(
+                    "MODEL> repair=",
+                    repair_meta.get("status"),
+                    "protected=",
+                    repair_meta.get("protected_count"),
+                    "epochs=",
+                    repair_meta.get("epochs"),
                 )
             if sleep_meta:
                 print(
