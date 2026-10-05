@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.16.3 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.16.4 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -19,7 +19,7 @@ Commands
   - crossing: canonical-vs-pre-sleep-confuser sequence margin
   - greedy alignment: canonical token vs strongest local competitor margin
   - preservation: KL divergence against the pre-sleep model on protected prompts
-  - output: model/model-sem-sleep-v0163.pt
+  - output: model/model-sem-sleep-v0164.pt
   - memory remains on disk after sleep for auditability
 
 This is an experimental online internalization path.  It does not run the full
@@ -44,7 +44,7 @@ from tokenizer import Tokenizer
 DEFAULT_MODEL = "model/model-sem-internalized-v01575.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
-DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0163.pt"
+DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0164.pt"
 
 PROTECTED_PROMPTS = [
     "コンピュータとは",
@@ -64,7 +64,7 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.16.3 Chat + /sleep internalization"
+        description="LLM_SEM v0.16.4 Chat + /sleep internalization"
     )
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
@@ -76,15 +76,16 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.16.3 uses the decoder LR scale that actually crossed the boundary
+    # v0.16.4 uses the decoder LR scale that actually crossed the boundary
     # in v0.15.7.2, while monitoring preservation and stopping early.
-    p.add_argument("--sleep-epochs", type=int, default=120)
+    p.add_argument("--sleep-epochs", type=int, default=240)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--sleep-lr-lm-head", type=float, default=2.0e-4)
     p.add_argument("--sleep-kl", type=float, default=0.50)
     p.add_argument("--sleep-margin-weight", type=float, default=1.00)
     p.add_argument("--sleep-target-margin", type=float, default=0.15)
-    p.add_argument("--sleep-token-margin-weight", type=float, default=1.00)
+    p.add_argument("--sleep-token-margin-weight", type=float, default=2.00)
+    p.add_argument("--sleep-hard-token-weight", type=float, default=2.00)
     p.add_argument("--sleep-target-token-margin", type=float, default=0.25)
     p.add_argument("--sleep-min-token-top1", type=float, default=1.00)
     p.add_argument("--sleep-clip-grad", type=float, default=1.0)
@@ -239,6 +240,7 @@ def canonical_token_margin_stats(
     prompt: str,
     answer: str,
     target_margin: float,
+    hard_token_weight: float = 0.0,
 ):
     """Teacher-forced token-level argmax margin for the canonical answer.
 
@@ -291,7 +293,10 @@ def canonical_token_margin_stats(
         dtype=margins.dtype,
         device=margins.device,
     )
-    loss = F.relu(margin_target - margins).mean()
+    hinge = F.relu(margin_target - margins)
+    mean_hinge = hinge.mean()
+    worst_hinge = hinge.max()
+    loss = mean_hinge + hard_token_weight * worst_hinge
 
     top1_ratio = (margins >= 0.0).float().mean()
     min_margin = margins.min()
@@ -318,6 +323,7 @@ def mean_token_margin_metrics(
             item["prompt"],
             item["answer"],
             target_margin,
+            0.0,
         )
         ratios.append(float(ratio.item()))
         min_margins.append(float(min_margin.item()))
@@ -330,6 +336,69 @@ def mean_token_margin_metrics(
             sum(mean_margins) / max(1, len(mean_margins))
         ),
     }
+
+
+@torch.no_grad()
+def print_hard_token_diagnostics(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    memory: List[Dict[str, str]],
+    limit: int = 8,
+) -> None:
+    """Print the worst canonical token decisions under teacher forcing."""
+    for item in memory:
+        device = next(model.parameters()).device
+        prompt_ids = encode_prompt(tokenizer, item["prompt"])
+        answer_ids = tokenizer.encode(
+            item["answer"],
+            add_bos=False,
+            add_eos=True,
+        )
+        full = prompt_ids + answer_ids
+        if len(full) > model.context_length:
+            keep = model.context_length
+            full = full[-keep:]
+            prompt_count = max(1, keep - len(answer_ids))
+        else:
+            prompt_count = len(prompt_ids)
+
+        x = torch.tensor([full[:-1]], dtype=torch.long, device=device)
+        targets = torch.tensor([full[1:]], dtype=torch.long, device=device)
+        logits = model(x)
+        start = max(0, prompt_count - 1)
+        logits = logits[:, start:, :]
+        targets = targets[:, start:]
+
+        target_logits = logits.gather(
+            -1, targets.unsqueeze(-1)
+        ).squeeze(-1)
+        competitor = logits.clone()
+        competitor.scatter_(
+            -1, targets.unsqueeze(-1), float("-inf")
+        )
+        comp_values, comp_ids = competitor.max(dim=-1)
+        margins = target_logits - comp_values
+
+        rows = []
+        for i in range(margins.size(1)):
+            target_id = int(targets[0, i].item())
+            comp_id = int(comp_ids[0, i].item())
+            rows.append(
+                (
+                    float(margins[0, i].item()),
+                    i,
+                    tokenizer.decode([target_id]),
+                    tokenizer.decode([comp_id]),
+                )
+            )
+        rows.sort(key=lambda row: row[0])
+
+        print(f"HARD> prompt={item['prompt']!r}")
+        for margin, pos, target_tok, comp_tok in rows[:limit]:
+            print(
+                f"  pos={pos:02d} target={target_tok!r} "
+                f"competitor={comp_tok!r} margin={margin:+.4f}"
+            )
 
 
 @torch.no_grad()
@@ -489,7 +558,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.16.3",
+        "version": "v0.16.4",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "memory_count": memory_count,
@@ -518,6 +587,7 @@ def run_sleep(
     margin_weight: float,
     target_margin: float,
     token_margin_weight: float,
+    hard_token_weight: float,
     target_token_margin: float,
     min_token_top1: float,
     clip_grad: float,
@@ -581,7 +651,7 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.16.3 /sleep")
+    print(" LLM_SEM v0.16.4 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
@@ -591,6 +661,7 @@ def run_sleep(
     print("Sequence margin wt   :", margin_weight)
     print("Sequence target      :", target_margin)
     print("Token margin wt      :", token_margin_weight)
+    print("Hard-token weight    :", hard_token_weight)
     print("Token target margin  :", target_token_margin)
     print("Min token top1       :", min_token_top1)
     print("Min NLL gain target  :", min_nll_gain)
@@ -663,6 +734,7 @@ def run_sleep(
                 item["prompt"],
                 item["answer"],
                 target_token_margin,
+                hard_token_weight,
             )
             preserve_loss = kl_to_reference(
                 model,
@@ -840,6 +912,11 @@ def run_sleep(
         f"{after_token['mean_margin']:+.6f}"
     )
     print(f"Protected prompt JS  : {prompt_js:.6f}")
+    print_hard_token_diagnostics(
+        model,
+        tokenizer,
+        memory,
+    )
     print("Selected epoch       :", best_epoch)
     print("Stop reason          :", stop_reason)
     print("Candidate checkpoint :", output_path)
@@ -910,7 +987,7 @@ def main():
     memory = load_memory(memory_path)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.16.3 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.16.4 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -1005,6 +1082,7 @@ def main():
                 margin_weight=args.sleep_margin_weight,
                 target_margin=args.sleep_target_margin,
                 token_margin_weight=args.sleep_token_margin_weight,
+                hard_token_weight=args.sleep_hard_token_weight,
                 target_token_margin=args.sleep_target_token_margin,
                 min_token_top1=args.sleep_min_token_top1,
                 clip_grad=args.sleep_clip_grad,
