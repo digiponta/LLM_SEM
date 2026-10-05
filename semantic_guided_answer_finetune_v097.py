@@ -68,6 +68,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--concept-balanced", action="store_true")
     p.add_argument("--protected-distill-weight", type=float, default=0.0)
     p.add_argument("--new-knowledge-weight", type=float, default=1.0)
+    p.add_argument("--first-divergence-weight", type=float, default=0.0)
+    p.add_argument("--first-divergence-margin", type=float, default=1.0)
     return p.parse_args()
 
 
@@ -648,6 +650,164 @@ def mandatory_generation_report(
 
 
 @torch.no_grad()
+def build_first_divergence_specs(
+    teacher: LanguageModel,
+    tokenizer: Tokenizer,
+    rows: list[dict],
+) -> list[dict]:
+    specs = []
+    for row in rows:
+        if not bool(row.get("must_train", False)):
+            continue
+
+        prompt = build_prompt(row)
+        prompt_ids = tokenizer.encode(
+            prompt,
+            add_bos=True,
+            add_eos=False,
+        )
+        generated = teacher.generate(
+            prompt_ids,
+            max_new_tokens=96,
+            eos_id=tokenizer.eos_id,
+            temperature=0.2,
+            top_k=1,
+            repetition_penalty=1.10,
+        )
+        teacher_answer_ids = generated[len(prompt_ids):]
+        target_answer_ids = tokenizer.encode(
+            str(row["answer"]),
+            add_bos=False,
+            add_eos=True,
+        )
+
+        limit = min(len(teacher_answer_ids), len(target_answer_ids))
+        divergence = None
+        for index in range(limit):
+            if teacher_answer_ids[index] != target_answer_ids[index]:
+                divergence = index
+                break
+
+        if divergence is None:
+            if len(target_answer_ids) > len(teacher_answer_ids):
+                divergence = len(teacher_answer_ids)
+            else:
+                continue
+
+        if divergence >= len(target_answer_ids):
+            continue
+
+        competitor_id = (
+            int(teacher_answer_ids[divergence])
+            if divergence < len(teacher_answer_ids)
+            else tokenizer.eos_id
+        )
+        target_id = int(target_answer_ids[divergence])
+        if competitor_id == target_id:
+            continue
+
+        specs.append({
+            "query": str(row["query"]),
+            "prompt": prompt,
+            "target_prefix_ids": [
+                int(x) for x in target_answer_ids[:divergence]
+            ],
+            "target_id": target_id,
+            "competitor_id": competitor_id,
+            "divergence_index": divergence,
+            "target_token": tokenizer.decode(
+                [target_id],
+                skip_special_tokens=False,
+            ),
+            "competitor_token": tokenizer.decode(
+                [competitor_id],
+                skip_special_tokens=False,
+            ),
+        })
+    return specs
+
+
+def first_divergence_margin_loss(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    specs: list[dict],
+    device: torch.device,
+    margin: float,
+) -> torch.Tensor:
+    if not specs:
+        return torch.tensor(0.0, device=device)
+
+    losses = []
+    context_length = max(1, int(model.context_length))
+    for spec in specs:
+        prompt_ids = tokenizer.encode(
+            str(spec["prompt"]),
+            add_bos=True,
+            add_eos=False,
+        )
+        prefix = prompt_ids + list(spec["target_prefix_ids"])
+        context = prefix[-context_length:]
+        if not context:
+            continue
+
+        x = torch.tensor(
+            [context],
+            dtype=torch.long,
+            device=device,
+        )
+        logits = model(x)[0, -1, :]
+        target_logit = logits[int(spec["target_id"])]
+        competitor_logit = logits[int(spec["competitor_id"])]
+        losses.append(
+            F.relu(
+                torch.tensor(float(margin), device=device)
+                - (target_logit - competitor_logit)
+            )
+        )
+
+    if not losses:
+        return torch.tensor(0.0, device=device)
+    return torch.stack(losses).mean()
+
+
+@torch.no_grad()
+def first_divergence_margin_report(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    specs: list[dict],
+    device: torch.device,
+) -> list[dict]:
+    out = []
+    context_length = max(1, int(model.context_length))
+    for spec in specs:
+        prompt_ids = tokenizer.encode(
+            str(spec["prompt"]),
+            add_bos=True,
+            add_eos=False,
+        )
+        prefix = prompt_ids + list(spec["target_prefix_ids"])
+        context = prefix[-context_length:]
+        if not context:
+            continue
+        x = torch.tensor([context], dtype=torch.long, device=device)
+        logits = model(x)[0, -1, :]
+        target_logit = float(logits[int(spec["target_id"])].item())
+        competitor_logit = float(
+            logits[int(spec["competitor_id"])].item()
+        )
+        out.append({
+            "query": spec["query"],
+            "divergence_index": int(spec["divergence_index"]),
+            "target_token": spec["target_token"],
+            "competitor_token": spec["competitor_token"],
+            "target_logit": target_logit,
+            "competitor_logit": competitor_logit,
+            "margin": target_logit - competitor_logit,
+        })
+    return out
+
+
+@torch.no_grad()
 def mean_semantic_cosine(student, teacher, tokenizer, benchmark, device, alpha):
     vals = []
     for row in benchmark:
@@ -706,6 +866,11 @@ def main() -> None:
         train_rows,
         args.alpha,
     )
+    divergence_specs = build_first_divergence_specs(
+        teacher,
+        tokenizer,
+        runtime_aligned_new_rows,
+    )
 
     protected_source_rows = [
         row for row in train_rows if bool(row.get("protected", False))
@@ -734,7 +899,7 @@ def main() -> None:
     )
 
     print("=" * 100)
-    print(" LLM_SEM v0.10.55 Prefix-Weighted Context-Aligned Fine-Tuning")
+    print(" LLM_SEM v0.10.56 First-Divergence Margin Fine-Tuning")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
@@ -756,6 +921,9 @@ def main() -> None:
     print("Protected rows      :", sum(int(bool(r.get("protected", False))) for r in train_rows))
     print("Protected distill wt:", args.protected_distill_weight)
     print("New knowledge weight:", args.new_knowledge_weight)
+    print("First-divergence wt :", args.first_divergence_weight)
+    print("First-divergence mar:", args.first_divergence_margin)
+    print("Divergence specs    :", len(divergence_specs))
     print("Runtime replay rows :", len(runtime_replay_rows))
     print("Runtime-aligned NEW :", len(runtime_aligned_new_rows))
     print("LM context length    :", student.context_length)
@@ -884,10 +1052,22 @@ def main() -> None:
         else:
             protected_loss = torch.tensor(0.0, device=device)
 
+        if args.first_divergence_weight > 0.0:
+            divergence_loss = first_divergence_margin_loss(
+                student,
+                tokenizer,
+                divergence_specs,
+                device,
+                args.first_divergence_margin,
+            )
+        else:
+            divergence_loss = torch.tensor(0.0, device=device)
+
         total = (
             args.new_knowledge_weight * qa_loss
             + args.preserve_weight * preserve_loss
             + args.protected_distill_weight * protected_loss
+            + args.first_divergence_weight * divergence_loss
         )
         total.backward()
         torch.nn.utils.clip_grad_norm_(
@@ -922,6 +1102,7 @@ def main() -> None:
                 f"qa={float(qa_loss.item()):.6f} "
                 f"preserve={float(preserve_loss.item()):.6f} "
                 f"protect={float(protected_loss.item()):.6f} "
+                f"div={float(divergence_loss.item()):.6f} "
                 f"holdout={holdout_nll:.6f} "
                 f"sem_cos={sem_cos:.6f}{marker}"
             )
@@ -963,6 +1144,18 @@ def main() -> None:
 
     sem_cos = mean_semantic_cosine(
         student, teacher, tokenizer, benchmark, device, args.alpha
+    )
+    divergence_before = first_divergence_margin_report(
+        teacher,
+        tokenizer,
+        divergence_specs,
+        device,
+    )
+    divergence_after = first_divergence_margin_report(
+        student,
+        tokenizer,
+        divergence_specs,
+        device,
     )
     generation_sim, generation_details = mandatory_generation_report(
         student,
@@ -1093,6 +1286,16 @@ def main() -> None:
     print("Target QA NLL   :", f"{mandatory_nll_before:.6f} -> {mandatory_nll_after:.6f}")
     print("Trainable delta :", f"L2={trainable_param_delta_l2:.6f} rel={trainable_param_relative_delta:.9f}")
     print("Semantic cosine :", f"{sem_cos:.6f}")
+    if divergence_after:
+        print("First-divergence margins:")
+        before_by_query = {x["query"]: x for x in divergence_before}
+        for item in divergence_after:
+            before = before_by_query.get(item["query"], {})
+            print(
+                f"  {item['query']!r}: "
+                f"{before.get('margin', 0.0):+.6f} -> {item['margin']:+.6f} "
+                f"target={item['target_token']!r} competitor={item['competitor_token']!r}"
+            )
     print("Mandatory generation similarity:", f"{generation_sim:.6f}")
     print("Mandatory minimum similarity   :", f"{generation_min:.6f}")
     print("Concept generation mean        :", f"{concept_generation_mean:.6f}")
@@ -1143,6 +1346,10 @@ def main() -> None:
                     "trainable_param_delta_l2": trainable_param_delta_l2,
                     "trainable_param_relative_delta": trainable_param_relative_delta,
                     "semantic_cosine": sem_cos,
+                    "first_divergence_weight": float(args.first_divergence_weight),
+                    "first_divergence_margin_target": float(args.first_divergence_margin),
+                    "first_divergence_before": divergence_before,
+                    "first_divergence_after": divergence_after,
                     "protected_distillation_loss": float(protected_loss.item()),
                     "new_knowledge_weight": float(args.new_knowledge_weight),
                     "generation_similarity_mean": generation_sim,
