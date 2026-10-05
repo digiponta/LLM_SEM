@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.16.2 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.16.3 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -16,9 +16,10 @@ Commands
 /sleep performs monitored decoder-only internalization:
   - trainable: final_norm + lm_head
   - target: taught prompt/answer NLL
-  - crossing: canonical-vs-pre-sleep-confuser margin loss
+  - crossing: canonical-vs-pre-sleep-confuser sequence margin
+  - greedy alignment: canonical token vs strongest local competitor margin
   - preservation: KL divergence against the pre-sleep model on protected prompts
-  - output: model/model-sem-sleep-v0162.pt
+  - output: model/model-sem-sleep-v0163.pt
   - memory remains on disk after sleep for auditability
 
 This is an experimental online internalization path.  It does not run the full
@@ -43,7 +44,7 @@ from tokenizer import Tokenizer
 DEFAULT_MODEL = "model/model-sem-internalized-v01575.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
-DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0162.pt"
+DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0163.pt"
 
 PROTECTED_PROMPTS = [
     "コンピュータとは",
@@ -63,7 +64,7 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.16.2 Chat + /sleep internalization"
+        description="LLM_SEM v0.16.3 Chat + /sleep internalization"
     )
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
@@ -75,7 +76,7 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.16.2 uses the decoder LR scale that actually crossed the boundary
+    # v0.16.3 uses the decoder LR scale that actually crossed the boundary
     # in v0.15.7.2, while monitoring preservation and stopping early.
     p.add_argument("--sleep-epochs", type=int, default=120)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
@@ -83,6 +84,9 @@ def parse_args():
     p.add_argument("--sleep-kl", type=float, default=0.50)
     p.add_argument("--sleep-margin-weight", type=float, default=1.00)
     p.add_argument("--sleep-target-margin", type=float, default=0.15)
+    p.add_argument("--sleep-token-margin-weight", type=float, default=1.00)
+    p.add_argument("--sleep-target-token-margin", type=float, default=0.25)
+    p.add_argument("--sleep-min-token-top1", type=float, default=1.00)
     p.add_argument("--sleep-clip-grad", type=float, default=1.0)
     p.add_argument("--sleep-min-nll-gain", type=float, default=0.50)
     p.add_argument("--sleep-max-prompt-js", type=float, default=0.08)
@@ -227,6 +231,105 @@ def continuation_margin(
         model, tokenizer, prompt, confuser
     )
     return confuser_nll - canonical_nll
+
+
+def canonical_token_margin_stats(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    prompt: str,
+    answer: str,
+    target_margin: float,
+):
+    """Teacher-forced token-level argmax margin for the canonical answer.
+
+    For every canonical continuation token:
+        token_margin = target_logit - max(non_target_logits)
+
+    The differentiable loss pushes every canonical token above its strongest
+    local competitor.  top1_ratio == 1.0 means the complete teacher-forced
+    canonical path is locally greedy-compatible.
+    """
+    device = next(model.parameters()).device
+
+    prompt_ids = encode_prompt(tokenizer, prompt)
+    answer_ids = tokenizer.encode(answer, add_bos=False, add_eos=True)
+    if not answer_ids:
+        raise ValueError("answer token sequence is empty")
+
+    full = prompt_ids + answer_ids
+    if len(full) > model.context_length:
+        keep = model.context_length
+        full = full[-keep:]
+        prompt_count = max(1, keep - len(answer_ids))
+    else:
+        prompt_count = len(prompt_ids)
+
+    x = torch.tensor([full[:-1]], dtype=torch.long, device=device)
+    targets = torch.tensor([full[1:]], dtype=torch.long, device=device)
+
+    logits = model(x)
+    start = max(0, prompt_count - 1)
+    logits = logits[:, start:, :]
+    targets = targets[:, start:]
+
+    target_logits = logits.gather(
+        dim=-1,
+        index=targets.unsqueeze(-1),
+    ).squeeze(-1)
+
+    competitor_logits = logits.clone()
+    competitor_logits.scatter_(
+        dim=-1,
+        index=targets.unsqueeze(-1),
+        value=float("-inf"),
+    )
+    strongest_competitor = competitor_logits.max(dim=-1).values
+
+    margins = target_logits - strongest_competitor
+    margin_target = torch.as_tensor(
+        target_margin,
+        dtype=margins.dtype,
+        device=margins.device,
+    )
+    loss = F.relu(margin_target - margins).mean()
+
+    top1_ratio = (margins >= 0.0).float().mean()
+    min_margin = margins.min()
+    mean_margin = margins.mean()
+
+    return loss, top1_ratio, min_margin, mean_margin
+
+
+@torch.no_grad()
+def mean_token_margin_metrics(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    memory: List[Dict[str, str]],
+    target_margin: float,
+):
+    ratios = []
+    min_margins = []
+    mean_margins = []
+
+    for item in memory:
+        _, ratio, min_margin, mean_margin = canonical_token_margin_stats(
+            model,
+            tokenizer,
+            item["prompt"],
+            item["answer"],
+            target_margin,
+        )
+        ratios.append(float(ratio.item()))
+        min_margins.append(float(min_margin.item()))
+        mean_margins.append(float(mean_margin.item()))
+
+    return {
+        "top1_ratio": sum(ratios) / max(1, len(ratios)),
+        "min_margin": min(min_margins) if min_margins else float("-inf"),
+        "mean_margin": (
+            sum(mean_margins) / max(1, len(mean_margins))
+        ),
+    }
 
 
 @torch.no_grad()
@@ -386,7 +489,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.16.2",
+        "version": "v0.16.3",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "memory_count": memory_count,
@@ -414,6 +517,9 @@ def run_sleep(
     lambda_kl: float,
     margin_weight: float,
     target_margin: float,
+    token_margin_weight: float,
+    target_token_margin: float,
+    min_token_top1: float,
     clip_grad: float,
     min_nll_gain: float,
     max_prompt_js: float,
@@ -475,21 +581,38 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.16.2 /sleep")
+    print(" LLM_SEM v0.16.3 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
     print("LR final_norm        :", lr_final_norm)
     print("LR lm_head           :", lr_lm_head)
     print("KL preservation      :", lambda_kl)
-    print("Margin weight        :", margin_weight)
-    print("Target margin        :", target_margin)
+    print("Sequence margin wt   :", margin_weight)
+    print("Sequence target      :", target_margin)
+    print("Token margin wt      :", token_margin_weight)
+    print("Token target margin  :", target_token_margin)
+    print("Min token top1       :", min_token_top1)
     print("Min NLL gain target  :", min_nll_gain)
     print("Max protected JS     :", max_prompt_js)
     print("Check every          :", check_every)
     print("Trainable            : final_norm + lm_head")
     print(f"Memory NLL before    : {before_nll:.6f}")
+    before_token = mean_token_margin_metrics(
+        model,
+        tokenizer,
+        memory,
+        target_token_margin,
+    )
     print(f"Memory margin before : {before_margin:+.6f}")
+    print(
+        "Token top1 before    : "
+        f"{before_token['top1_ratio']:.1%}"
+    )
+    print(
+        "Min token margin     : "
+        f"{before_token['min_margin']:+.6f}"
+    )
     print()
 
     best_state = copy.deepcopy(model.state_dict())
@@ -503,6 +626,7 @@ def run_sleep(
     for epoch in range(1, epochs + 1):
         total_target = 0.0
         total_margin = 0.0
+        total_token_margin = 0.0
         total_kl = 0.0
 
         for item, confuser in zip(memory, confusers):
@@ -528,6 +652,18 @@ def run_sleep(
                     device=margin.device,
                 ) - margin
             )
+            (
+                token_margin_loss,
+                _token_top1,
+                _token_min_margin,
+                _token_mean_margin,
+            ) = canonical_token_margin_stats(
+                model,
+                tokenizer,
+                item["prompt"],
+                item["answer"],
+                target_token_margin,
+            )
             preserve_loss = kl_to_reference(
                 model,
                 reference,
@@ -538,6 +674,7 @@ def run_sleep(
             loss = (
                 target_loss
                 + margin_weight * margin_loss
+                + token_margin_weight * token_margin_loss
                 + lambda_kl * preserve_loss
             )
             loss.backward()
@@ -554,6 +691,7 @@ def run_sleep(
 
             total_target += float(target_loss.item())
             total_margin += float(margin_loss.item())
+            total_token_margin += float(token_margin_loss.item())
             total_kl += float(preserve_loss.item())
 
         should_check = (
@@ -581,6 +719,12 @@ def run_sleep(
                 memory,
                 confusers,
             )
+            token_metrics = mean_token_margin_metrics(
+                model,
+                tokenizer,
+                memory,
+                target_token_margin,
+            )
             gain = before_nll - current_nll
             count = len(memory)
 
@@ -591,6 +735,9 @@ def run_sleep(
                 f"gain={gain:+.6f} "
                 f"margin={current_margin:+.6f} "
                 f"margin_loss={total_margin / count:.6f} "
+                f"token_top1={token_metrics['top1_ratio']:.1%} "
+                f"token_min={token_metrics['min_margin']:+.4f} "
+                f"token_loss={total_token_margin / count:.6f} "
                 f"preserve_kl={total_kl / count:.6f} "
                 f"prompt_js={current_js:.6f}"
             )
@@ -612,11 +759,13 @@ def run_sleep(
             if (
                 gain >= min_nll_gain
                 and current_margin >= target_margin
+                and token_metrics["top1_ratio"] >= min_token_top1
+                and token_metrics["min_margin"] >= target_token_margin
             ):
-                stop_reason = "NLL_AND_MARGIN_TARGET_REACHED"
+                stop_reason = "GREEDY_CANONICAL_TARGET_REACHED"
                 print(
-                    "SLEEP> NLL and decoder-margin targets reached; "
-                    "stopping at first sufficient safe checkpoint"
+                    "SLEEP> NLL, sequence margin, and token-level "
+                    "greedy targets reached; stopping"
                 )
                 break
 
@@ -641,6 +790,12 @@ def run_sleep(
         model,
         tokenizer,
         PROTECTED_PROMPTS,
+    )
+    after_token = mean_token_margin_metrics(
+        model,
+        tokenizer,
+        memory,
+        target_token_margin,
     )
 
     save_sleep_checkpoint(
@@ -671,6 +826,18 @@ def run_sleep(
     print(
         f"Decoder margin       : "
         f"{before_margin:+.6f} -> {after_margin:+.6f}"
+    )
+    print(
+        "Canonical token top1 : "
+        f"{after_token['top1_ratio']:.1%}"
+    )
+    print(
+        "Min token margin     : "
+        f"{after_token['min_margin']:+.6f}"
+    )
+    print(
+        "Mean token margin    : "
+        f"{after_token['mean_margin']:+.6f}"
     )
     print(f"Protected prompt JS  : {prompt_js:.6f}")
     print("Selected epoch       :", best_epoch)
@@ -743,7 +910,7 @@ def main():
     memory = load_memory(memory_path)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.16.2 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.16.3 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -769,7 +936,7 @@ def main():
         if not raw:
             continue
 
-        if raw in {"/quit", "/exit"}:
+        if raw in {"/quit", "/exit", "quit", "exit"}:
             break
 
         if raw == "/help":
@@ -837,6 +1004,9 @@ def main():
                 lambda_kl=args.sleep_kl,
                 margin_weight=args.sleep_margin_weight,
                 target_margin=args.sleep_target_margin,
+                token_margin_weight=args.sleep_token_margin_weight,
+                target_token_margin=args.sleep_target_token_margin,
+                min_token_top1=args.sleep_min_token_top1,
                 clip_grad=args.sleep_clip_grad,
                 min_nll_gain=args.sleep_min_nll_gain,
                 max_prompt_js=args.sleep_max_prompt_js,
