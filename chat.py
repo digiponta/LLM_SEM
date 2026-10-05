@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.17.2 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.17.3 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -22,7 +22,7 @@ Commands
   - greedy alignment: canonical token vs strongest local competitor margin
   - retention/correction: validated protected knowledge
     (NLL + teacher-forced margin + runtime-aligned greedy margin)
-  - output: model/model-sem-sleep-v0172.pt
+  - output: model/model-sem-sleep-v0173.pt
   - memory remains on disk after sleep for auditability
 
 This is an experimental online internalization path.  It does not run the full
@@ -44,12 +44,13 @@ from model import LanguageModel
 from tokenizer import Tokenizer
 
 
-DEFAULT_MODEL = "model/model-sem-internalized-v01575.pt"
+DEFAULT_BASE_MODEL = "model/model-sem-internalized-v01575.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
 DEFAULT_PROTECTED = "data/protected_knowledge_v0167.jsonl"
-DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0172.pt"
-DEFAULT_REPAIR_MODEL = "model/model-sem-canonical-base-v0172.pt"
+DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0173.pt"
+DEFAULT_REPAIR_MODEL = "model/model-sem-canonical-base-v0173.pt"
+DEFAULT_MODEL_STATE = "data/runtime_model_state_v0173.json"
 
 PROTECTED_PROMPTS = [
     "コンピュータとは",
@@ -71,21 +72,29 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.17.2 Chat + /sleep internalization"
+        description="LLM_SEM v0.17.3 Chat + /sleep internalization"
     )
-    p.add_argument("--model", default=DEFAULT_MODEL)
+    p.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "Explicit startup checkpoint. If omitted, v0.17.3 restores the "
+            "last persisted live model."
+        ),
+    )
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     p.add_argument("--memory", default=DEFAULT_MEMORY)
     p.add_argument("--protected", default=DEFAULT_PROTECTED)
     p.add_argument("--sleep-output", default=DEFAULT_SLEEP_MODEL)
     p.add_argument("--repair-output", default=DEFAULT_REPAIR_MODEL)
+    p.add_argument("--model-state", default=DEFAULT_MODEL_STATE)
     p.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
     p.add_argument("--max-new-tokens", type=int, default=96)
     p.add_argument("--temperature", type=float, default=0.0)
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.17.2 treats validated protected knowledge as authoritative
+    # v0.17.3 treats validated protected knowledge as authoritative
     # multi-task supervision, not as a source-model preservation constraint.
     p.add_argument("--sleep-epochs", type=int, default=600)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
@@ -112,7 +121,7 @@ def parse_args():
     p.add_argument("--sleep-max-prompt-js", type=float, default=0.08)
     p.add_argument("--sleep-check-every", type=int, default=10)
 
-    # v0.17.2 Phase A: repair the validated canonical base first.
+    # v0.17.3 Phase A: repair the validated canonical base first.
     p.add_argument("--repair-epochs", type=int, default=1600)
     p.add_argument("--repair-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--repair-lr-lm-head", type=float, default=2.0e-4)
@@ -125,6 +134,51 @@ def parse_args():
     p.add_argument("--repair-runtime-margin", type=float, default=0.05)
     p.add_argument("--repair-check-every", type=int, default=10)
     return p.parse_args()
+
+
+def save_runtime_model_state(
+    state_path: Path,
+    model_path: Path,
+    source: str,
+) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": "v0.17.3",
+        "model": str(model_path),
+        "source": source,
+    }
+    with state_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def resolve_startup_model(
+    explicit_model: str | None,
+    state_path: Path,
+) -> Tuple[Path, str]:
+    if explicit_model:
+        return Path(explicit_model), "explicit"
+
+    if state_path.exists():
+        try:
+            with state_path.open("r", encoding="utf-8") as f:
+                payload = json.load(f)
+            saved = Path(str(payload.get("model", "")))
+            if saved.exists():
+                return saved, "persisted"
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+
+    # Migration convenience for users coming from v0.17.2.
+    legacy_candidates = [
+        Path("model/model-sem-sleep-v0172.pt"),
+        Path("model/model-sem-canonical-base-v0172.pt"),
+    ]
+    for candidate in legacy_candidates:
+        if candidate.exists():
+            return candidate, "legacy-auto"
+
+    return Path(DEFAULT_BASE_MODEL), "base-fallback"
+
 
 
 def choose_device(name: str) -> torch.device:
@@ -826,7 +880,7 @@ def save_repair_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["repair"] = {
-        "version": "v0.17.2",
+        "version": "v0.17.3",
         "source_checkpoint": str(source_path),
         "protected_file": str(protected_path),
         "protected_count": protected_count,
@@ -849,6 +903,7 @@ def run_repair(
     protected_path: Path,
     source_path: Path,
     output_path: Path,
+    state_path: Path,
     epochs: int,
     lr_final_norm: float,
     lr_lm_head: float,
@@ -897,7 +952,7 @@ def run_repair(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.2 /repair - Canonical Base Repair")
+    print(" LLM_SEM v0.17.3 /repair - Canonical Base Repair")
     print("=" * 72)
     print("Protected entries    :", len(protected_rows))
     print("Epochs               :", epochs)
@@ -1097,6 +1152,11 @@ def run_repair(
         device=device,
     )
     reloaded.eval()
+    save_runtime_model_state(
+        state_path,
+        output_path,
+        "repair",
+    )
 
     print()
     print("REPAIR RESULT")
@@ -1146,7 +1206,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.17.2",
+        "version": "v0.17.3",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "protected_file": str(protected_path),
@@ -1170,6 +1230,7 @@ def run_sleep(
     protected_path: Path,
     source_path: Path,
     output_path: Path,
+    state_path: Path,
     epochs: int,
     lr_final_norm: float,
     lr_lm_head: float,
@@ -1270,7 +1331,7 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.2 /sleep")
+    print(" LLM_SEM v0.17.3 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
@@ -1533,7 +1594,7 @@ def run_sleep(
                 f"prompt_js={current_js:.6f}"
             )
 
-            # v0.17.2: choose the best multi-task checkpoint by canonical
+            # v0.17.3: choose the best multi-task checkpoint by canonical
             # progress.  Source-model JS is diagnostic only because the source
             # answers are known to be wrong for some protected prompts.
             progress_score = (
@@ -1648,6 +1709,11 @@ def run_sleep(
         device=device,
     )
     reloaded.eval()
+    save_runtime_model_state(
+        state_path,
+        output_path,
+        "sleep",
+    )
 
     print()
     print("SLEEP RESULT")
@@ -1750,12 +1816,16 @@ def main():
     args = parse_args()
     device = choose_device(args.device)
 
-    model_path = Path(args.model)
     tokenizer_path = Path(args.tokenizer)
     memory_path = Path(args.memory)
     protected_path = Path(args.protected)
     sleep_output = Path(args.sleep_output)
     repair_output = Path(args.repair_output)
+    model_state_path = Path(args.model_state)
+    model_path, startup_source = resolve_startup_model(
+        args.model,
+        model_state_path,
+    )
 
     if not model_path.exists():
         raise FileNotFoundError(
@@ -1778,12 +1848,14 @@ def main():
     validate_protected_knowledge(protected_rows)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.17.2 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.17.3 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
         print("GPU             :", torch.cuda.get_device_name(device))
     print("Model           :", current_model_path)
+    print("Startup source  :", startup_source)
+    print("Model state     :", model_state_path)
     print("Tokenizer       :", tokenizer_path)
     print("Parameters      :", f"{model.parameter_count:,}")
     print("Context length  :", model.context_length)
@@ -1879,6 +1951,7 @@ def main():
                 protected_path=protected_path,
                 source_path=current_model_path,
                 output_path=repair_output,
+                state_path=model_state_path,
                 epochs=epochs,
                 lr_final_norm=args.repair_lr_final_norm,
                 lr_lm_head=args.repair_lr_lm_head,
@@ -1917,6 +1990,7 @@ def main():
                 protected_path=protected_path,
                 source_path=current_model_path,
                 output_path=sleep_output,
+                state_path=model_state_path,
                 epochs=epochs,
                 lr_final_norm=args.sleep_lr_final_norm,
                 lr_lm_head=args.sleep_lr_lm_head,
@@ -1946,6 +2020,7 @@ def main():
 
         if raw == "/model":
             print("MODEL>", current_model_path)
+            print("MODEL> state=", model_state_path)
             sleep_meta = checkpoint.get("sleep")
             repair_meta = checkpoint.get("repair")
             promotion_meta = checkpoint.get("promotion")
