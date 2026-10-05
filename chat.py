@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.16.7 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.16.8 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -19,8 +19,8 @@ Commands
   - target: taught prompt/answer NLL
   - crossing: canonical-vs-pre-sleep-confuser sequence margin
   - greedy alignment: canonical token vs strongest local competitor margin
-  - preservation: validated canonical protected knowledge (NLL + token margin)
-  - output: model/model-sem-sleep-v0167.pt
+  - retention/correction: validated protected knowledge (NLL + token margin)
+  - output: model/model-sem-sleep-v0168.pt
   - memory remains on disk after sleep for auditability
 
 This is an experimental online internalization path.  It does not run the full
@@ -46,7 +46,7 @@ DEFAULT_MODEL = "model/model-sem-internalized-v01575.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
 DEFAULT_PROTECTED = "data/protected_knowledge_v0167.jsonl"
-DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0167.pt"
+DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0168.pt"
 
 PROTECTED_PROMPTS = [
     "コンピュータとは",
@@ -68,7 +68,7 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.16.7 Chat + /sleep internalization"
+        description="LLM_SEM v0.16.8 Chat + /sleep internalization"
     )
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
@@ -81,17 +81,17 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.16.7 uses the decoder LR scale that actually crossed the boundary
-    # in v0.15.7.2, while monitoring preservation and stopping early.
-    p.add_argument("--sleep-epochs", type=int, default=240)
+    # v0.16.8 treats validated protected knowledge as authoritative
+    # multi-task supervision, not as a source-model preservation constraint.
+    p.add_argument("--sleep-epochs", type=int, default=600)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--sleep-lr-lm-head", type=float, default=2.0e-4)
-    # Source KL is only a secondary regularizer in v0.16.7.  Validated
-    # protected knowledge is authoritative even when the source model is wrong.
-    p.add_argument("--sleep-kl", type=float, default=0.05)
+    # The source model is known to be wrong on several protected prompts.
+    # Do not pull the corrected model back toward those wrong distributions.
+    p.add_argument("--sleep-kl", type=float, default=0.0)
     p.add_argument("--sleep-protected-nll-weight", type=float, default=1.00)
-    p.add_argument("--sleep-protected-token-weight", type=float, default=1.50)
-    p.add_argument("--sleep-protected-hard-weight", type=float, default=1.00)
+    p.add_argument("--sleep-protected-token-weight", type=float, default=3.00)
+    p.add_argument("--sleep-protected-hard-weight", type=float, default=2.00)
     p.add_argument("--sleep-protected-target-margin", type=float, default=0.05)
     p.add_argument("--sleep-min-protected-top1", type=float, default=1.00)
     p.add_argument("--sleep-max-protected-nll-delta", type=float, default=0.25)
@@ -784,7 +784,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.16.7",
+        "version": "v0.16.8",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "protected_file": str(protected_path),
@@ -898,7 +898,7 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.16.7 /sleep")
+    print(" LLM_SEM v0.16.8 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
@@ -911,7 +911,7 @@ def run_sleep(
     print("Protected hard wt    :", protected_hard_weight)
     print("Protected margin     :", protected_target_margin)
     print("Min protected top1   :", min_protected_top1)
-    print("Max protected dNLL   :", max_protected_nll_delta)
+    print("Max protected dNLL   :", max_protected_nll_delta, "(diagnostic only)")
     print("Sequence margin wt   :", margin_weight)
     print("Sequence target      :", target_margin)
     print("Token margin wt      :", token_margin_weight)
@@ -919,7 +919,7 @@ def run_sleep(
     print("Token target margin  :", target_token_margin)
     print("Min token top1       :", min_token_top1)
     print("Min NLL gain target  :", min_nll_gain)
-    print("Max protected JS     :", max_prompt_js)
+    print("Source prompt JS     :", max_prompt_js, "(diagnostic only)")
     print("Check every          :", check_every)
     print("Trainable            : final_norm + lm_head")
     print(f"Memory NLL before    : {before_nll:.6f}")
@@ -950,8 +950,7 @@ def run_sleep(
     print()
 
     best_state = copy.deepcopy(model.state_dict())
-    best_nll = before_nll
-    best_js = 0.0
+    best_score = float("inf")
     best_epoch = 0
     stop_reason = "MAX_EPOCHS"
 
@@ -1126,27 +1125,30 @@ def run_sleep(
                 f"prompt_js={current_js:.6f}"
             )
 
-            if (
-                current_js <= max_prompt_js
-                and protected_delta <= max_protected_nll_delta
-                and protected_metrics["top1_ratio"] >= min_protected_top1
-                and protected_metrics["min_margin"] >= 0.0
-                and current_nll < best_nll
-            ):
-                best_nll = current_nll
-                best_js = current_js
+            # v0.16.8: choose the best multi-task checkpoint by canonical
+            # progress.  Source-model JS is diagnostic only because the source
+            # answers are known to be wrong for some protected prompts.
+            progress_score = (
+                current_nll
+                + current_protected_nll
+                + 5.0 * (1.0 - token_metrics["top1_ratio"])
+                + 5.0 * (1.0 - protected_metrics["top1_ratio"])
+                + max(0.0, -token_metrics["min_margin"])
+                + max(0.0, -protected_metrics["min_margin"])
+            )
+            if progress_score < best_score:
+                best_score = progress_score
                 best_epoch = epoch
                 best_state = copy.deepcopy(model.state_dict())
 
-            if (
-                current_js > max_prompt_js
-                or protected_delta > max_protected_nll_delta
-            ):
-                stop_reason = "PRESERVATION_LIMIT"
-                print(
-                    "SLEEP> preservation/protected limit reached; "
-                    "restoring best safe checkpoint"
+            if not torch.isfinite(
+                torch.as_tensor(
+                    current_nll + current_protected_nll,
+                    device=device,
                 )
+            ):
+                stop_reason = "NUMERICAL_FAILURE"
+                print("SLEEP> numerical failure; restoring best checkpoint")
                 break
 
             if (
@@ -1154,14 +1156,13 @@ def run_sleep(
                 and current_margin >= target_margin
                 and token_metrics["top1_ratio"] >= min_token_top1
                 and token_metrics["min_margin"] >= target_token_margin
-                and protected_delta <= max_protected_nll_delta
                 and protected_metrics["top1_ratio"] >= min_protected_top1
                 and protected_metrics["min_margin"] >= protected_target_margin
             ):
-                stop_reason = "GREEDY_CANONICAL_TARGET_REACHED"
+                stop_reason = "NEW_AND_PROTECTED_CANONICAL_REACHED"
                 print(
-                    "SLEEP> NLL, sequence margin, and token-level "
-                    "greedy targets reached; stopping"
+                    "SLEEP> new memory and validated protected knowledge "
+                    "both reached canonical greedy targets; stopping"
                 )
                 break
 
@@ -1345,7 +1346,7 @@ def main():
     validate_protected_knowledge(protected_rows)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.16.7 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.16.8 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
