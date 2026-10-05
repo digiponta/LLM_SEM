@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.17.7 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.18.0 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -9,6 +9,9 @@ Commands
 /teach <prompt> => <answer>
 /memory
 /protected
+/propteach <statement>
+/prop <subject>
+/props
 /repair [epochs]
 /sleep [epochs]
 /model
@@ -43,6 +46,11 @@ import torch.nn.functional as F
 
 from model import LanguageModel
 from tokenizer import Tokenizer
+from semantic_proposition_v0180 import (
+    add_statement,
+    compose_subject,
+    load_propositions,
+)
 
 
 DEFAULT_BASE_MODEL = "model/model-sem-internalized-v01575.pt"
@@ -57,6 +65,7 @@ DEFAULT_GATE_INTERNALIZED_MODEL = "model/model-sem-sleep-v0172.pt"
 DEFAULT_GATE_THRESHOLD = 0.069273
 DEFAULT_UNKNOWN_THRESHOLD = 0.943319
 DEFAULT_UNKNOWN_RESPONSE = "その質問については、現在の知識では確実に答えられません。"
+DEFAULT_PROPOSITION_STORE = "data/semantic_propositions_v0180.jsonl"
 
 GATE_POSITIVE_SEEDS = [
     "量子センサーとは",
@@ -94,19 +103,20 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.17.7 Chat + /sleep internalization"
+        description="LLM_SEM v0.18.0 Chat + /sleep internalization"
     )
     p.add_argument(
         "--model",
         default=None,
         help=(
-            "Explicit startup checkpoint. If omitted, v0.17.7 restores the "
+            "Explicit startup checkpoint. If omitted, v0.18.0 restores the "
             "last persisted live model."
         ),
     )
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     p.add_argument("--memory", default=DEFAULT_MEMORY)
     p.add_argument("--protected", default=DEFAULT_PROTECTED)
+    p.add_argument("--propositions", default=DEFAULT_PROPOSITION_STORE)
     p.add_argument("--sleep-output", default=DEFAULT_SLEEP_MODEL)
     p.add_argument("--repair-output", default=DEFAULT_REPAIR_MODEL)
     p.add_argument("--model-state", default=DEFAULT_MODEL_STATE)
@@ -135,7 +145,7 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.17.7 treats validated protected knowledge as authoritative
+    # v0.18.0 treats validated protected knowledge as authoritative
     # multi-task supervision, not as a source-model preservation constraint.
     p.add_argument("--sleep-epochs", type=int, default=600)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
@@ -162,7 +172,7 @@ def parse_args():
     p.add_argument("--sleep-max-prompt-js", type=float, default=0.08)
     p.add_argument("--sleep-check-every", type=int, default=10)
 
-    # v0.17.7 Phase A: repair the validated canonical base first.
+    # v0.18.0 Phase A: repair the validated canonical base first.
     p.add_argument("--repair-epochs", type=int, default=1600)
     p.add_argument("--repair-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--repair-lr-lm-head", type=float, default=2.0e-4)
@@ -184,7 +194,7 @@ def save_runtime_model_state(
 ) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "version": "v0.17.7",
+        "version": "v0.18.0",
         "model": str(model_path),
         "source": source,
     }
@@ -1042,7 +1052,7 @@ def save_repair_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["repair"] = {
-        "version": "v0.17.7",
+        "version": "v0.18.0",
         "source_checkpoint": str(source_path),
         "protected_file": str(protected_path),
         "protected_count": protected_count,
@@ -1114,7 +1124,7 @@ def run_repair(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.7 /repair - Canonical Base Repair")
+    print(" LLM_SEM v0.18.0 /repair - Canonical Base Repair")
     print("=" * 72)
     print("Protected entries    :", len(protected_rows))
     print("Epochs               :", epochs)
@@ -1368,7 +1378,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.17.7",
+        "version": "v0.18.0",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "protected_file": str(protected_path),
@@ -1493,7 +1503,7 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.7 /sleep")
+    print(" LLM_SEM v0.18.0 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
@@ -1756,7 +1766,7 @@ def run_sleep(
                 f"prompt_js={current_js:.6f}"
             )
 
-            # v0.17.7: choose the best multi-task checkpoint by canonical
+            # v0.18.0: choose the best multi-task checkpoint by canonical
             # progress.  Source-model JS is diagnostic only because the source
             # answers are known to be wrong for some protected prompts.
             progress_score = (
@@ -1951,6 +1961,18 @@ Commands:
   /protected
       Show validated canonical knowledge.
 
+  /propteach <statement>
+      Decompose a canonical proposition statement into atomic propositions
+      and persist them. Examples:
+        /propteach XはYである。
+        /propteach Xは、Yであり、Zである。
+
+  /prop <subject>
+      Compose all stored atomic propositions for one subject.
+
+  /props
+      Show all stored atomic propositions.
+
   /repair [epochs]
       Phase A: repair the model using protected canonical knowledge only.
       Saves model-sem-canonical-base-v0169.pt and makes it the live model.
@@ -1981,6 +2003,7 @@ def main():
     tokenizer_path = Path(args.tokenizer)
     memory_path = Path(args.memory)
     protected_path = Path(args.protected)
+    proposition_path = Path(args.propositions)
     sleep_output = Path(args.sleep_output)
     repair_output = Path(args.repair_output)
     model_state_path = Path(args.model_state)
@@ -2046,7 +2069,7 @@ def main():
     )
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.17.7 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.18.0 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -2061,6 +2084,8 @@ def main():
     print("Memory entries  :", len(memory))
     print("Protected file  :", protected_path)
     print("Protected count :", len(protected_rows))
+    print("Proposition db  :", proposition_path)
+    print("Propositions    :", len(load_propositions(proposition_path)))
     print("Sleep output    :", sleep_output)
     print("Repair output   :", repair_output)
     print("Gate base       :", gate_base_path)
@@ -2071,8 +2096,8 @@ def main():
     print("Unknown th      :", args.unknown_threshold)
     print()
     print(
-        "Commands: /teach, /memory, /protected, /repair, /sleep, "
-        "/model, /reload, /help, /quit"
+        "Commands: /teach, /memory, /protected, /propteach, /prop, /props, "
+        "/repair, /sleep, /model, /reload, /help, /quit"
     )
     print()
 
@@ -2111,6 +2136,58 @@ def main():
                 print(
                     f"  {index:02d}. {item['prompt']} => {item['answer']}"
                 )
+            continue
+
+        if raw == "/props":
+            propositions = load_propositions(proposition_path)
+            if not propositions:
+                print("PROP> empty")
+            else:
+                print(f"PROP> {len(propositions)} atomic propositions")
+                for index, item in enumerate(propositions, 1):
+                    print(
+                        f"  {index:02d}. "
+                        f"subject={item.subject!r} value={item.value!r}"
+                    )
+            continue
+
+        if raw.startswith("/propteach"):
+            statement = raw[len("/propteach"):].strip()
+            if not statement:
+                print("PROP> usage: /propteach <statement>")
+                continue
+
+            added = add_statement(proposition_path, statement)
+            if not added:
+                print(
+                    "PROP> unsupported proposition grammar; "
+                    "expected XはYである or Xは、Yであり、Zである"
+                )
+                continue
+
+            print(f"PROP> decomposed {len(added)} proposition(s)")
+            for item in added:
+                print(
+                    f"  + subject={item.subject!r} value={item.value!r}"
+                )
+            composed = compose_subject(
+                proposition_path,
+                added[0].subject,
+            )
+            print("PROP> composed:", composed)
+            continue
+
+        if raw.startswith("/prop "):
+            subject = raw[len("/prop "):].strip()
+            if not subject:
+                print("PROP> usage: /prop <subject>")
+                continue
+
+            composed = compose_subject(proposition_path, subject)
+            if composed:
+                print("PROP>", composed)
+            else:
+                print(f"PROP> no propositions for {subject!r}")
             continue
 
         if raw.startswith("/teach"):
