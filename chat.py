@@ -8,6 +8,7 @@ Commands
 /help
 /teach <prompt> => <answer>
 /memory
+/protected
 /sleep [epochs]
 /model
 /reload
@@ -85,7 +86,9 @@ def parse_args():
     p.add_argument("--sleep-epochs", type=int, default=240)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--sleep-lr-lm-head", type=float, default=2.0e-4)
-    p.add_argument("--sleep-kl", type=float, default=0.50)
+    # Source KL is only a secondary regularizer in v0.16.7.  Validated
+    # protected knowledge is authoritative even when the source model is wrong.
+    p.add_argument("--sleep-kl", type=float, default=0.05)
     p.add_argument("--sleep-protected-nll-weight", type=float, default=1.00)
     p.add_argument("--sleep-protected-token-weight", type=float, default=1.50)
     p.add_argument("--sleep-protected-hard-weight", type=float, default=1.00)
@@ -1289,6 +1292,9 @@ Commands:
   /memory
       Show current Semantic Memory.
 
+  /protected
+      Show validated canonical knowledge that /sleep must preserve.
+
   /sleep [epochs]
       Internalize current Semantic Memory into final_norm + lm_head.
       The result is saved as a candidate checkpoint and becomes the live model.
@@ -1354,7 +1360,10 @@ def main():
     print("Protected count :", len(protected_rows))
     print("Sleep output    :", sleep_output)
     print()
-    print("Commands: /teach, /memory, /sleep, /model, /reload, /help, /quit")
+    print(
+        "Commands: /teach, /memory, /protected, /sleep, "
+        "/model, /reload, /help, /quit"
+    )
     print()
 
     while True:
@@ -1384,6 +1393,14 @@ def main():
                     print(
                         f"  {index:02d}. {item['prompt']} => {item['answer']}"
                     )
+            continue
+
+        if raw == "/protected":
+            print(f"PROTECTED> {len(protected_rows)} entries")
+            for index, item in enumerate(protected_rows, 1):
+                print(
+                    f"  {index:02d}. {item['prompt']} => {item['answer']}"
+                )
             continue
 
         if raw.startswith("/teach"):
