@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.17.4 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.17.6 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -52,6 +52,25 @@ DEFAULT_PROTECTED = "data/protected_knowledge_v0167.jsonl"
 DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0174.pt"
 DEFAULT_REPAIR_MODEL = "model/model-sem-canonical-base-v0174.pt"
 DEFAULT_MODEL_STATE = "data/runtime_model_state_v0174.json"
+DEFAULT_GATE_BASE_MODEL = "model/model-sem-canonical-base-v0172.pt"
+DEFAULT_GATE_INTERNALIZED_MODEL = "model/model-sem-sleep-v0172.pt"
+DEFAULT_GATE_THRESHOLD = 0.069273
+
+GATE_POSITIVE_SEEDS = [
+    "量子センサーとは",
+    "量子センサとは",
+    "量子センサーとは。",
+    "量子センサとは？",
+]
+
+GATE_NEGATIVE_SEEDS = [
+    "量子通信とは",
+    "量子コンピュータとは",
+    "量子暗号とは",
+    "暗号",
+    "文学とは",
+    "ブラックホールとは",
+]
 
 PROTECTED_PROMPTS = [
     "コンピュータとは",
@@ -73,13 +92,13 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.17.4 Chat + /sleep internalization"
+        description="LLM_SEM v0.17.6 Chat + /sleep internalization"
     )
     p.add_argument(
         "--model",
         default=None,
         help=(
-            "Explicit startup checkpoint. If omitted, v0.17.4 restores the "
+            "Explicit startup checkpoint. If omitted, v0.17.6 restores the "
             "last persisted live model."
         ),
     )
@@ -89,13 +108,23 @@ def parse_args():
     p.add_argument("--sleep-output", default=DEFAULT_SLEEP_MODEL)
     p.add_argument("--repair-output", default=DEFAULT_REPAIR_MODEL)
     p.add_argument("--model-state", default=DEFAULT_MODEL_STATE)
+    p.add_argument("--gate-base-model", default=DEFAULT_GATE_BASE_MODEL)
+    p.add_argument(
+        "--gate-internalized-model",
+        default=DEFAULT_GATE_INTERNALIZED_MODEL,
+    )
+    p.add_argument(
+        "--gate-threshold",
+        type=float,
+        default=DEFAULT_GATE_THRESHOLD,
+    )
     p.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
     p.add_argument("--max-new-tokens", type=int, default=96)
     p.add_argument("--temperature", type=float, default=0.0)
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.17.4 treats validated protected knowledge as authoritative
+    # v0.17.6 treats validated protected knowledge as authoritative
     # multi-task supervision, not as a source-model preservation constraint.
     p.add_argument("--sleep-epochs", type=int, default=600)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
@@ -122,7 +151,7 @@ def parse_args():
     p.add_argument("--sleep-max-prompt-js", type=float, default=0.08)
     p.add_argument("--sleep-check-every", type=int, default=10)
 
-    # v0.17.4 Phase A: repair the validated canonical base first.
+    # v0.17.6 Phase A: repair the validated canonical base first.
     p.add_argument("--repair-epochs", type=int, default=1600)
     p.add_argument("--repair-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--repair-lr-lm-head", type=float, default=2.0e-4)
@@ -144,7 +173,7 @@ def save_runtime_model_state(
 ) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "version": "v0.17.4",
+        "version": "v0.17.6",
         "model": str(model_path),
         "source": source,
     }
@@ -249,6 +278,73 @@ def normalize_runtime_prompt(text: str) -> str:
 
 def encode_prompt(tokenizer: Tokenizer, text: str) -> List[int]:
     return tokenizer.encode(text, add_bos=True, add_eos=False)
+
+
+@torch.no_grad()
+def gate_semantic_vector(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    text: str,
+) -> torch.Tensor:
+    ids = tokenizer.encode(text, add_bos=True, add_eos=False)
+    ids = ids[-model.context_length:]
+    x = torch.tensor(
+        [ids],
+        dtype=torch.long,
+        device=next(model.parameters()).device,
+    )
+    vector = model.encode_semantic(
+        x,
+        pooling="mean",
+    )[0]
+    return F.normalize(vector, p=2, dim=-1)
+
+
+@torch.no_grad()
+def build_internalized_gate(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    positive = torch.stack([
+        gate_semantic_vector(model, tokenizer, text)
+        for text in GATE_POSITIVE_SEEDS
+    ]).mean(dim=0)
+    negative = torch.stack([
+        gate_semantic_vector(model, tokenizer, text)
+        for text in GATE_NEGATIVE_SEEDS
+    ]).mean(dim=0)
+    return (
+        F.normalize(positive, p=2, dim=-1),
+        F.normalize(negative, p=2, dim=-1),
+    )
+
+
+@torch.no_grad()
+def internalized_gate_score(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    prompt: str,
+    positive_centroid: torch.Tensor,
+    negative_centroid: torch.Tensor,
+) -> Dict[str, float]:
+    vector = gate_semantic_vector(model, tokenizer, prompt)
+    pos_sim = float(
+        F.cosine_similarity(
+            vector.unsqueeze(0),
+            positive_centroid.unsqueeze(0),
+        ).item()
+    )
+    neg_sim = float(
+        F.cosine_similarity(
+            vector.unsqueeze(0),
+            negative_centroid.unsqueeze(0),
+        ).item()
+    )
+    return {
+        "positive_similarity": pos_sim,
+        "negative_similarity": neg_sim,
+        "margin": pos_sim - neg_sim,
+    }
 
 
 @torch.no_grad()
@@ -896,7 +992,7 @@ def save_repair_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["repair"] = {
-        "version": "v0.17.4",
+        "version": "v0.17.6",
         "source_checkpoint": str(source_path),
         "protected_file": str(protected_path),
         "protected_count": protected_count,
@@ -968,7 +1064,7 @@ def run_repair(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.4 /repair - Canonical Base Repair")
+    print(" LLM_SEM v0.17.6 /repair - Canonical Base Repair")
     print("=" * 72)
     print("Protected entries    :", len(protected_rows))
     print("Epochs               :", epochs)
@@ -1222,7 +1318,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.17.4",
+        "version": "v0.17.6",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "protected_file": str(protected_path),
@@ -1347,7 +1443,7 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.4 /sleep")
+    print(" LLM_SEM v0.17.6 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
@@ -1610,7 +1706,7 @@ def run_sleep(
                 f"prompt_js={current_js:.6f}"
             )
 
-            # v0.17.4: choose the best multi-task checkpoint by canonical
+            # v0.17.6: choose the best multi-task checkpoint by canonical
             # progress.  Source-model JS is diagnostic only because the source
             # answers are known to be wrong for some protected prompts.
             progress_score = (
@@ -1838,6 +1934,8 @@ def main():
     sleep_output = Path(args.sleep_output)
     repair_output = Path(args.repair_output)
     model_state_path = Path(args.model_state)
+    gate_base_path = Path(args.gate_base_model)
+    gate_internalized_path = Path(args.gate_internalized_model)
     model_path, startup_source = resolve_startup_model(
         args.model,
         model_state_path,
@@ -1850,6 +1948,14 @@ def main():
         )
     if not tokenizer_path.exists():
         raise FileNotFoundError(tokenizer_path)
+    if not gate_base_path.exists():
+        raise FileNotFoundError(
+            f"Gate base model not found: {gate_base_path}"
+        )
+    if not gate_internalized_path.exists():
+        raise FileNotFoundError(
+            f"Gate internalized model not found: {gate_internalized_path}"
+        )
 
     tokenizer = Tokenizer.load(str(tokenizer_path))
     model, checkpoint = LanguageModel.load_checkpoint(
@@ -1858,13 +1964,32 @@ def main():
     )
     model.eval()
 
+    gate_base_model, _gate_base_checkpoint = LanguageModel.load_checkpoint(
+        str(gate_base_path),
+        device=device,
+    )
+    gate_base_model.eval()
+
+    gate_internalized_model, _gate_internalized_checkpoint = (
+        LanguageModel.load_checkpoint(
+            str(gate_internalized_path),
+            device=device,
+        )
+    )
+    gate_internalized_model.eval()
+
+    gate_positive_centroid, gate_negative_centroid = build_internalized_gate(
+        gate_base_model,
+        tokenizer,
+    )
+
     current_model_path = model_path
     memory = load_knowledge(memory_path)
     protected_rows = load_knowledge(protected_path)
     validate_protected_knowledge(protected_rows)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.17.4 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.17.6 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -1881,6 +2006,10 @@ def main():
     print("Protected count :", len(protected_rows))
     print("Sleep output    :", sleep_output)
     print("Repair output   :", repair_output)
+    print("Gate base       :", gate_base_path)
+    print("Gate internal   :", gate_internalized_path)
+    print("Gate pooling    : mean")
+    print("Gate threshold  :", args.gate_threshold)
     print()
     print(
         "Commands: /teach, /memory, /protected, /repair, /sleep, "
@@ -2082,8 +2211,31 @@ def main():
         if runtime_prompt != raw:
             print(f"NORM> {raw!r} -> {runtime_prompt!r}")
 
+        gate = internalized_gate_score(
+            gate_base_model,
+            tokenizer,
+            runtime_prompt,
+            gate_positive_centroid,
+            gate_negative_centroid,
+        )
+        use_internalized = gate["margin"] >= args.gate_threshold
+        route_model = (
+            gate_internalized_model
+            if use_internalized
+            else gate_base_model
+        )
+        route_name = "INTERNALIZED" if use_internalized else "CANONICAL"
+        print(
+            "GATE> "
+            f"route={route_name} "
+            f"pos={gate['positive_similarity']:.6f} "
+            f"neg={gate['negative_similarity']:.6f} "
+            f"margin={gate['margin']:+.6f} "
+            f"threshold={args.gate_threshold:+.6f}"
+        )
+
         answer = generate_answer(
-            model=model,
+            model=route_model,
             tokenizer=tokenizer,
             prompt=runtime_prompt,
             max_new_tokens=args.max_new_tokens,
