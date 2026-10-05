@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.17.0 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.17.1 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -22,7 +22,7 @@ Commands
   - greedy alignment: canonical token vs strongest local competitor margin
   - retention/correction: validated protected knowledge
     (NLL + teacher-forced margin + runtime-aligned greedy margin)
-  - output: model/model-sem-sleep-v0170.pt
+  - output: model/model-sem-sleep-v0171.pt
   - memory remains on disk after sleep for auditability
 
 This is an experimental online internalization path.  It does not run the full
@@ -48,8 +48,8 @@ DEFAULT_MODEL = "model/model-sem-internalized-v01575.pt"
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
 DEFAULT_PROTECTED = "data/protected_knowledge_v0167.jsonl"
-DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0170.pt"
-DEFAULT_REPAIR_MODEL = "model/model-sem-canonical-base-v0169.pt"
+DEFAULT_SLEEP_MODEL = "model/model-sem-sleep-v0171.pt"
+DEFAULT_REPAIR_MODEL = "model/model-sem-canonical-base-v0171.pt"
 
 PROTECTED_PROMPTS = [
     "コンピュータとは",
@@ -71,7 +71,7 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.17.0 Chat + /sleep internalization"
+        description="LLM_SEM v0.17.1 Chat + /sleep internalization"
     )
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
@@ -85,7 +85,7 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.17.0 treats validated protected knowledge as authoritative
+    # v0.17.1 treats validated protected knowledge as authoritative
     # multi-task supervision, not as a source-model preservation constraint.
     p.add_argument("--sleep-epochs", type=int, default=600)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
@@ -112,14 +112,15 @@ def parse_args():
     p.add_argument("--sleep-max-prompt-js", type=float, default=0.08)
     p.add_argument("--sleep-check-every", type=int, default=10)
 
-    # v0.17.0 Phase A: repair the validated canonical base first.
-    p.add_argument("--repair-epochs", type=int, default=800)
+    # v0.17.1 Phase A: repair the validated canonical base first.
+    p.add_argument("--repair-epochs", type=int, default=1600)
     p.add_argument("--repair-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--repair-lr-lm-head", type=float, default=2.0e-4)
     p.add_argument("--repair-nll-weight", type=float, default=1.0)
     p.add_argument("--repair-runtime-weight", type=float, default=4.0)
-    p.add_argument("--repair-runtime-hard-weight", type=float, default=4.0)
-    p.add_argument("--repair-runtime-margin", type=float, default=0.10)
+    p.add_argument("--repair-runtime-hard-weight", type=float, default=0.50)
+    p.add_argument("--repair-hard-start-top1", type=float, default=0.98)
+    p.add_argument("--repair-runtime-margin", type=float, default=0.05)
     p.add_argument("--repair-check-every", type=int, default=10)
     return p.parse_args()
 
@@ -823,7 +824,7 @@ def save_repair_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["repair"] = {
-        "version": "v0.17.0",
+        "version": "v0.17.1",
         "source_checkpoint": str(source_path),
         "protected_file": str(protected_path),
         "protected_count": protected_count,
@@ -852,6 +853,7 @@ def run_repair(
     nll_weight: float,
     runtime_weight: float,
     runtime_hard_weight: float,
+    hard_start_top1: float,
     runtime_margin: float,
     repetition_penalty: float,
     clip_grad: float,
@@ -891,7 +893,7 @@ def run_repair(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.0 /repair - Canonical Base Repair")
+    print(" LLM_SEM v0.17.1 /repair - Canonical Base Repair")
     print("=" * 72)
     print("Protected entries    :", len(protected_rows))
     print("Epochs               :", epochs)
@@ -900,6 +902,7 @@ def run_repair(
     print("NLL weight           :", nll_weight)
     print("Runtime margin wt    :", runtime_weight)
     print("Runtime hard wt      :", runtime_hard_weight)
+    print("Hard start top1      :", hard_start_top1)
     print("Runtime target margin:", runtime_margin)
     print("Repetition penalty   :", repetition_penalty)
     print("Trainable            : final_norm + lm_head")
@@ -922,6 +925,7 @@ def run_repair(
     )
     best_epoch = 0
     stop_reason = "MAX_EPOCHS"
+    hard_focus_active = False
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -948,7 +952,7 @@ def run_repair(
             protected_rows,
             repetition_penalty,
             runtime_margin,
-            runtime_hard_weight,
+            runtime_hard_weight if hard_focus_active else 0.0,
         )
 
         loss = (
@@ -995,8 +999,19 @@ def run_repair(
             f"runtime_top1={runtime_metrics['top1_ratio']:.1%} "
             f"runtime_min={runtime_metrics['min_margin']:+.4f} "
             f"runtime_mean={runtime_metrics['mean_margin']:+.4f} "
-            f"runtime_loss={float(runtime_loss.item()):.6f}"
+            f"runtime_loss={float(runtime_loss.item()):.6f} "
+            f"hard_focus={'ON' if hard_focus_active else 'OFF'}"
         )
+
+        if (
+            not hard_focus_active
+            and runtime_metrics["top1_ratio"] >= hard_start_top1
+        ):
+            hard_focus_active = True
+            print(
+                "REPAIR> curriculum switch: hard-token focus enabled "
+                f"at top1={runtime_metrics['top1_ratio']:.1%}"
+            )
 
         score = (
             current_nll
@@ -1105,7 +1120,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.17.0",
+        "version": "v0.17.1",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "protected_file": str(protected_path),
@@ -1229,7 +1244,7 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.0 /sleep")
+    print(" LLM_SEM v0.17.1 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
@@ -1492,7 +1507,7 @@ def run_sleep(
                 f"prompt_js={current_js:.6f}"
             )
 
-            # v0.17.0: choose the best multi-task checkpoint by canonical
+            # v0.17.1: choose the best multi-task checkpoint by canonical
             # progress.  Source-model JS is diagnostic only because the source
             # answers are known to be wrong for some protected prompts.
             progress_score = (
@@ -1737,7 +1752,7 @@ def main():
     validate_protected_knowledge(protected_rows)
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.17.0 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.17.1 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -1844,6 +1859,7 @@ def main():
                 nll_weight=args.repair_nll_weight,
                 runtime_weight=args.repair_runtime_weight,
                 runtime_hard_weight=args.repair_runtime_hard_weight,
+                hard_start_top1=args.repair_hard_start_top1,
                 runtime_margin=args.repair_runtime_margin,
                 repetition_penalty=args.repetition_penalty,
                 clip_grad=args.sleep_clip_grad,
