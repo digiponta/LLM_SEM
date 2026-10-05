@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.17.6 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.17.7 interactive chat with Semantic Memory /sleep.
 
 Commands
 --------
@@ -55,6 +55,8 @@ DEFAULT_MODEL_STATE = "data/runtime_model_state_v0174.json"
 DEFAULT_GATE_BASE_MODEL = "model/model-sem-canonical-base-v0172.pt"
 DEFAULT_GATE_INTERNALIZED_MODEL = "model/model-sem-sleep-v0172.pt"
 DEFAULT_GATE_THRESHOLD = 0.069273
+DEFAULT_UNKNOWN_THRESHOLD = 0.943319
+DEFAULT_UNKNOWN_RESPONSE = "その質問については、現在の知識では確実に答えられません。"
 
 GATE_POSITIVE_SEEDS = [
     "量子センサーとは",
@@ -92,13 +94,13 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.17.6 Chat + /sleep internalization"
+        description="LLM_SEM v0.17.7 Chat + /sleep internalization"
     )
     p.add_argument(
         "--model",
         default=None,
         help=(
-            "Explicit startup checkpoint. If omitted, v0.17.6 restores the "
+            "Explicit startup checkpoint. If omitted, v0.17.7 restores the "
             "last persisted live model."
         ),
     )
@@ -118,13 +120,22 @@ def parse_args():
         type=float,
         default=DEFAULT_GATE_THRESHOLD,
     )
+    p.add_argument(
+        "--unknown-threshold",
+        type=float,
+        default=DEFAULT_UNKNOWN_THRESHOLD,
+    )
+    p.add_argument(
+        "--unknown-response",
+        default=DEFAULT_UNKNOWN_RESPONSE,
+    )
     p.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
     p.add_argument("--max-new-tokens", type=int, default=96)
     p.add_argument("--temperature", type=float, default=0.0)
     p.add_argument("--top-k", type=int, default=40)
     p.add_argument("--repetition-penalty", type=float, default=1.10)
 
-    # v0.17.6 treats validated protected knowledge as authoritative
+    # v0.17.7 treats validated protected knowledge as authoritative
     # multi-task supervision, not as a source-model preservation constraint.
     p.add_argument("--sleep-epochs", type=int, default=600)
     p.add_argument("--sleep-lr-final-norm", type=float, default=5.0e-4)
@@ -151,7 +162,7 @@ def parse_args():
     p.add_argument("--sleep-max-prompt-js", type=float, default=0.08)
     p.add_argument("--sleep-check-every", type=int, default=10)
 
-    # v0.17.6 Phase A: repair the validated canonical base first.
+    # v0.17.7 Phase A: repair the validated canonical base first.
     p.add_argument("--repair-epochs", type=int, default=1600)
     p.add_argument("--repair-lr-final-norm", type=float, default=5.0e-4)
     p.add_argument("--repair-lr-lm-head", type=float, default=2.0e-4)
@@ -173,7 +184,7 @@ def save_runtime_model_state(
 ) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "version": "v0.17.6",
+        "version": "v0.17.7",
         "model": str(model_path),
         "source": source,
     }
@@ -344,6 +355,45 @@ def internalized_gate_score(
         "positive_similarity": pos_sim,
         "negative_similarity": neg_sim,
         "margin": pos_sim - neg_sim,
+    }
+
+
+@torch.no_grad()
+def build_canonical_known_anchors(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    protected_rows: List[Dict[str, str]],
+) -> Tuple[List[str], List[torch.Tensor]]:
+    prompts = [item["prompt"] for item in protected_rows]
+    vectors = [
+        gate_semantic_vector(model, tokenizer, prompt)
+        for prompt in prompts
+    ]
+    return prompts, vectors
+
+
+@torch.no_grad()
+def canonical_known_score(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    prompt: str,
+    anchor_prompts: List[str],
+    anchor_vectors: List[torch.Tensor],
+) -> Dict[str, object]:
+    vector = gate_semantic_vector(model, tokenizer, prompt)
+    scores = [
+        float(
+            F.cosine_similarity(
+                vector.unsqueeze(0),
+                anchor.unsqueeze(0),
+            ).item()
+        )
+        for anchor in anchor_vectors
+    ]
+    best_index = max(range(len(scores)), key=scores.__getitem__)
+    return {
+        "score": scores[best_index],
+        "nearest": anchor_prompts[best_index],
     }
 
 
@@ -992,7 +1042,7 @@ def save_repair_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["repair"] = {
-        "version": "v0.17.6",
+        "version": "v0.17.7",
         "source_checkpoint": str(source_path),
         "protected_file": str(protected_path),
         "protected_count": protected_count,
@@ -1064,7 +1114,7 @@ def run_repair(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.6 /repair - Canonical Base Repair")
+    print(" LLM_SEM v0.17.7 /repair - Canonical Base Repair")
     print("=" * 72)
     print("Protected entries    :", len(protected_rows))
     print("Epochs               :", epochs)
@@ -1318,7 +1368,7 @@ def save_sleep_checkpoint(
     checkpoint["model_state_dict"] = model.state_dict()
     checkpoint["loss"] = after_nll
     checkpoint["sleep"] = {
-        "version": "v0.17.6",
+        "version": "v0.17.7",
         "source_checkpoint": str(source_path),
         "memory_file": str(memory_path),
         "protected_file": str(protected_path),
@@ -1443,7 +1493,7 @@ def run_sleep(
 
     print()
     print("=" * 72)
-    print(" LLM_SEM v0.17.6 /sleep")
+    print(" LLM_SEM v0.17.7 /sleep")
     print("=" * 72)
     print("Memory entries       :", len(memory))
     print("Epochs               :", epochs)
@@ -1706,7 +1756,7 @@ def run_sleep(
                 f"prompt_js={current_js:.6f}"
             )
 
-            # v0.17.6: choose the best multi-task checkpoint by canonical
+            # v0.17.7: choose the best multi-task checkpoint by canonical
             # progress.  Source-model JS is diagnostic only because the source
             # answers are known to be wrong for some protected prompts.
             progress_score = (
@@ -1987,9 +2037,16 @@ def main():
     memory = load_knowledge(memory_path)
     protected_rows = load_knowledge(protected_path)
     validate_protected_knowledge(protected_rows)
+    canonical_anchor_prompts, canonical_anchor_vectors = (
+        build_canonical_known_anchors(
+            gate_base_model,
+            tokenizer,
+            protected_rows,
+        )
+    )
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.17.6 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.17.7 Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -2010,6 +2067,8 @@ def main():
     print("Gate internal   :", gate_internalized_path)
     print("Gate pooling    : mean")
     print("Gate threshold  :", args.gate_threshold)
+    print("Unknown pooling : mean")
+    print("Unknown th      :", args.unknown_threshold)
     print()
     print(
         "Commands: /teach, /memory, /protected, /repair, /sleep, "
@@ -2219,12 +2278,36 @@ def main():
             gate_negative_centroid,
         )
         use_internalized = gate["margin"] >= args.gate_threshold
-        route_model = (
-            gate_internalized_model
-            if use_internalized
-            else gate_base_model
+        if use_internalized:
+            print(
+                "GATE> "
+                "route=INTERNALIZED "
+                f"pos={gate['positive_similarity']:.6f} "
+                f"neg={gate['negative_similarity']:.6f} "
+                f"margin={gate['margin']:+.6f} "
+                f"threshold={args.gate_threshold:+.6f}"
+            )
+            answer = generate_answer(
+                model=gate_internalized_model,
+                tokenizer=tokenizer,
+                prompt=runtime_prompt,
+                max_new_tokens=args.max_new_tokens,
+                temperature=args.temperature,
+                top_k=args.top_k,
+                repetition_penalty=args.repetition_penalty,
+            )
+            print("LLM>", answer)
+            continue
+
+        known = canonical_known_score(
+            gate_base_model,
+            tokenizer,
+            runtime_prompt,
+            canonical_anchor_prompts,
+            canonical_anchor_vectors,
         )
-        route_name = "INTERNALIZED" if use_internalized else "CANONICAL"
+        is_known = float(known["score"]) >= args.unknown_threshold
+        route_name = "CANONICAL_KNOWN" if is_known else "UNKNOWN"
         print(
             "GATE> "
             f"route={route_name} "
@@ -2233,9 +2316,19 @@ def main():
             f"margin={gate['margin']:+.6f} "
             f"threshold={args.gate_threshold:+.6f}"
         )
+        print(
+            "UNKNOWN> "
+            f"score={float(known['score']):.6f} "
+            f"threshold={args.unknown_threshold:.6f} "
+            f"nearest={known['nearest']!r}"
+        )
+
+        if not is_known:
+            print("LLM>", args.unknown_response)
+            continue
 
         answer = generate_answer(
-            model=route_model,
+            model=gate_base_model,
             tokenizer=tokenizer,
             prompt=runtime_prompt,
             max_new_tokens=args.max_new_tokens,
