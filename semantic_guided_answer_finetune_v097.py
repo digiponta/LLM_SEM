@@ -95,6 +95,8 @@ def load_dataset(path: Path) -> list[dict]:
                 "protected": bool(row.get("protected", False)),
                 "runtime_prompt": str(row.get("runtime_prompt", "")),
                 "runtime_selected_label": str(row.get("runtime_selected_label", "")),
+                "loss_prefix_tokens": int(row.get("loss_prefix_tokens", 0)),
+                "loss_prefix_weight": float(row.get("loss_prefix_weight", 1.0)),
             })
     if not rows:
         raise RuntimeError("No valid QA rows.")
@@ -246,6 +248,9 @@ def context_window_answer_loss(
     prompt: str,
     answer: str,
     device: torch.device,
+    *,
+    prefix_tokens: int = 0,
+    prefix_weight: float = 1.0,
 ) -> torch.Tensor:
     """Teacher-force answer tokens with the same context window as generate().
 
@@ -261,45 +266,58 @@ def context_window_answer_loss(
     first_target = len(prompt_ids)
     context_length = max(1, int(model.context_length))
 
-    groups: dict[int, list[tuple[list[int], int]]] = {}
+    prefix_tokens = max(0, int(prefix_tokens))
+    prefix_weight = max(0.01, float(prefix_weight))
+
+    groups: dict[int, list[tuple[list[int], int, float]]] = {}
     for target_pos in range(first_target, len(full)):
         start = max(0, target_pos - context_length)
         prefix = full[start:target_pos]
         if not prefix:
             continue
+        answer_index = target_pos - first_target
+        token_weight = (
+            prefix_weight
+            if answer_index < prefix_tokens
+            else 1.0
+        )
         groups.setdefault(len(prefix), []).append(
-            (prefix, int(full[target_pos]))
+            (prefix, int(full[target_pos]), token_weight)
         )
 
     if not groups:
         return torch.tensor(0.0, device=device, requires_grad=True)
 
-    summed_losses = []
-    total_targets = 0
+    weighted_sums = []
+    total_weight = 0.0
 
     for items in groups.values():
         x = torch.tensor(
-            [prefix for prefix, _ in items],
+            [prefix for prefix, _, _ in items],
             dtype=torch.long,
             device=device,
         )
         targets = torch.tensor(
-            [target for _, target in items],
+            [target for _, target, _ in items],
             dtype=torch.long,
+            device=device,
+        )
+        weights = torch.tensor(
+            [weight for _, _, weight in items],
+            dtype=torch.float32,
             device=device,
         )
 
         logits = model(x)[:, -1, :]
-        summed_losses.append(
-            F.cross_entropy(
-                logits,
-                targets,
-                reduction="sum",
-            )
+        per_token = F.cross_entropy(
+            logits,
+            targets,
+            reduction="none",
         )
-        total_targets += len(items)
+        weighted_sums.append((per_token * weights).sum())
+        total_weight += float(weights.sum().item())
 
-    return torch.stack(summed_losses).sum() / max(1, total_targets)
+    return torch.stack(weighted_sums).sum() / max(1.0, total_weight)
 
 
 def answer_lm_loss(
@@ -314,6 +332,8 @@ def answer_lm_loss(
         build_prompt(row),
         str(row["answer"]),
         device,
+        prefix_tokens=int(row.get("loss_prefix_tokens", 0)),
+        prefix_weight=float(row.get("loss_prefix_weight", 1.0)),
     )
 
 
@@ -714,7 +734,7 @@ def main() -> None:
     )
 
     print("=" * 100)
-    print(" LLM_SEM v0.10.44 Batched Context-Aligned Fine-Tuning")
+    print(" LLM_SEM v0.10.55 Prefix-Weighted Context-Aligned Fine-Tuning")
     print("=" * 100)
     print("Device              :", device)
     if device.type == "cuda":
