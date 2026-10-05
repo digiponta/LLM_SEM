@@ -768,6 +768,7 @@ def save_sleep_checkpoint(
     source_checkpoint: Dict[str, object],
     source_path: Path,
     memory_path: Path,
+    protected_path: Path,
     memory_count: int,
     epochs: int,
     before_nll: float,
