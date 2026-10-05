@@ -55,6 +55,17 @@ def parse_args():
     return p.parse_args()
 
 
+def normalized_path_text(value: str) -> str:
+    """
+    Normalize path spelling for cross-platform provenance comparison.
+
+    Validation JSON may contain Windows backslashes while CLI defaults use
+    forward slashes.  Comparing raw strings would incorrectly block a valid
+    promotion.
+    """
+    return str(Path(value))
+
+
 def main():
     args = parse_args()
 
@@ -81,9 +92,19 @@ def main():
         raise FileNotFoundError(candidate)
 
     source = payload.get("source")
-    if source != args.expected_source:
+    if not isinstance(source, str) or not source:
+        raise RuntimeError("Promotion blocked: source checkpoint missing")
+
+    source_normalized = normalized_path_text(source)
+    expected_source_normalized = normalized_path_text(
+        args.expected_source
+    )
+
+    if source_normalized != expected_source_normalized:
         raise RuntimeError(
-            f"Promotion blocked: unexpected source {source!r}"
+            "Promotion blocked: unexpected source "
+            f"{source!r} (normalized={source_normalized!r}, "
+            f"expected={expected_source_normalized!r})"
         )
 
     if args.expected_candidate_fragment not in candidate.name:
@@ -125,7 +146,7 @@ def main():
     checkpoint["promotion"] = {
         "version": "v0.15.7.5",
         "status": "PROMOTED",
-        "source_checkpoint": source,
+        "source_checkpoint": source_normalized,
         "candidate_checkpoint": str(candidate),
         "validation_report": str(validation_path),
         "boundary_result": boundary.get("result"),
@@ -145,7 +166,7 @@ def main():
     manifest = {
         "version": "v0.15.7.5",
         "result": "PROMOTED",
-        "source_checkpoint": source,
+        "source_checkpoint": source_normalized,
         "candidate_checkpoint": str(candidate),
         "promoted_checkpoint": str(output_path),
         "validation_report": str(validation_path),
@@ -161,7 +182,7 @@ def main():
             "qualified": qualified,
             "boundary_ok": boundary_ok,
             "preservation_ok": preservation_ok,
-            "expected_source": args.expected_source,
+            "expected_source": expected_source_normalized,
             "expected_candidate_fragment": args.expected_candidate_fragment,
         },
     }
@@ -177,7 +198,7 @@ def main():
     print(" LLM_SEM v0.15.7.5 Final Promotion Gate")
     print("=" * 100)
     print("Validation           :", validation_path)
-    print("Source               :", source)
+    print("Source               :", source_normalized)
     print("Qualified candidate  :", candidate)
     print("Boundary             :", boundary.get("result"))
     print(
