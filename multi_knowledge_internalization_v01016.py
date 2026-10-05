@@ -1,6 +1,6 @@
 # multi_knowledge_internalization_v01016.py
 #
-# LLM_SEM v0.10.47
+# LLM_SEM v0.10.53
 # Candidate-only multi-knowledge internalization validation.
 # External Semantic/Answer/Relation Memory is not consulted.
 
@@ -27,7 +27,7 @@ from tokenizer import Tokenizer
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.10.47 Multi-Knowledge Internalization"
+        description="LLM_SEM v0.10.53 Multi-Knowledge Internalization"
     )
     p.add_argument("--model", required=True)
     p.add_argument("--dataset", default="data/semantic_sleep_qa_v0106.json")
@@ -99,7 +99,7 @@ def main() -> None:
     probes = select_probes(rows)
 
     print("=" * 104)
-    print(" LLM_SEM v0.10.47 Multi-Knowledge Internalization")
+    print(" LLM_SEM v0.10.53 Multi-Knowledge Internalization")
     print("=" * 104)
     print("Model              :", args.model)
     print("Dataset            :", args.dataset)
