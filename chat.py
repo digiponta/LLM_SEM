@@ -672,12 +672,11 @@ def runtime_replay_margin_stats(
     repetition_penalty: float,
     target_margin: float,
 ):
-    """Preserve source greedy decisions under the real generation rule.
+    """Runtime-aligned canonical token margin.
 
-    Replay targets were captured from the source model with temperature=0 and
-    the same repetition penalty.  For every answer position, the source next
-    token is forced to stay above the strongest competing token after applying
-    that penalty to the current model logits.
+    Uses the same rolling context and repetition penalty as LanguageModel.generate().
+    Short trajectories are evaluated in one vectorized forward pass.  Longer
+    trajectories fall back to per-token rolling-context evaluation.
     """
     device = next(model.parameters()).device
     losses = []
@@ -694,45 +693,67 @@ def runtime_replay_margin_stats(
             continue
 
         full = prompt_ids + answer_ids
-        x = torch.tensor(
-            [full[:-1]],
-            dtype=torch.long,
-            device=device,
-        )
-        logits_all = model(x)[0]
 
-        prompt_count = len(prompt_ids)
-        for answer_pos, target_id in enumerate(answer_ids):
-            full_pos = prompt_count - 1 + answer_pos
-            if full_pos >= logits_all.size(0):
-                break
-
-            prefix_end = prompt_count + answer_pos
-            prefix = full[:prefix_end]
-            if len(prefix) > model.context_length:
-                # The vectorized pass above no longer matches generate() once
-                # the rolling context window truncates.  Skip those late
-                # positions rather than train on a mismatched trajectory.
-                break
-
-            logits = apply_repetition_penalty_to_logits(
-                logits_all[full_pos],
-                prefix,
-                repetition_penalty,
+        if len(full) <= model.context_length:
+            x = torch.tensor(
+                [full[:-1]],
+                dtype=torch.long,
+                device=device,
             )
-            target_logit = logits[int(target_id)]
-            competitor = logits.clone()
-            competitor[int(target_id)] = float("-inf")
-            strongest = competitor.max()
-            margin = target_logit - strongest
-            all_margins.append(margin)
+            logits_all = model(x)[0]
+            prompt_count = len(prompt_ids)
 
-            margin_target = torch.as_tensor(
-                target_margin,
-                dtype=margin.dtype,
-                device=margin.device,
-            )
-            losses.append(F.relu(margin_target - margin))
+            for answer_pos, target_id in enumerate(answer_ids):
+                full_pos = prompt_count - 1 + answer_pos
+                prefix = full[:prompt_count + answer_pos]
+                logits = apply_repetition_penalty_to_logits(
+                    logits_all[full_pos],
+                    prefix,
+                    repetition_penalty,
+                )
+                target_logit = logits[int(target_id)]
+                competitor = logits.clone()
+                competitor[int(target_id)] = float("-inf")
+                strongest = competitor.max()
+                margin = target_logit - strongest
+                all_margins.append(margin)
+
+                margin_target = torch.as_tensor(
+                    target_margin,
+                    dtype=margin.dtype,
+                    device=margin.device,
+                )
+                losses.append(F.relu(margin_target - margin))
+        else:
+            # Exact generate()-aligned rolling context for long trajectories.
+            generated = list(prompt_ids)
+            for target_id in answer_ids:
+                context = generated[-model.context_length:]
+                x = torch.tensor(
+                    [context],
+                    dtype=torch.long,
+                    device=device,
+                )
+                logits = model(x)[0, -1, :]
+                logits = apply_repetition_penalty_to_logits(
+                    logits,
+                    generated,
+                    repetition_penalty,
+                )
+                target_logit = logits[int(target_id)]
+                competitor = logits.clone()
+                competitor[int(target_id)] = float("-inf")
+                strongest = competitor.max()
+                margin = target_logit - strongest
+                all_margins.append(margin)
+
+                margin_target = torch.as_tensor(
+                    target_margin,
+                    dtype=margin.dtype,
+                    device=margin.device,
+                )
+                losses.append(F.relu(margin_target - margin))
+                generated.append(int(target_id))
 
     if not losses:
         zero = torch.zeros((), device=device)
