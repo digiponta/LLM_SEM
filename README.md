@@ -1503,3 +1503,37 @@ python .\verify_ndc_stable_v01816.py
 ```
 
 See `RELEASE_NOTES_v0.18.16.md` for the full experiment history and stable architecture.
+
+
+## v0.19.0: Independent Holdout Generalization Evaluation
+
+v0.18.16 established a stable NDC runtime with:
+
+- main-class regression: 16/16 PASS
+- selected 3-digit regression: 33/33 PASS
+
+v0.19.0 does not modify the router. It freezes the stable runtime and evaluates
+generalization on a new independent holdout:
+
+- 60 known probes
+- 30 selected 3-digit codes
+- 2 unseen paraphrases per code
+- 12 UNKNOWN probes
+- no calibration on the holdout
+
+Run:
+
+```powershell
+python .\verify_ndc_independent_v0190.py
+```
+
+Primary metrics:
+
+- raw known accuracy
+- known accepted accuracy
+- known coverage
+- unknown reject rate
+- balanced score
+
+This experiment is intended to separate regression success from real
+generalization performance before expanding the selected NDC code set.
