@@ -1434,3 +1434,36 @@ Run:
 ```powershell
 python .\verify_ndc_hierarchy_rescue_v01814.py
 ```
+
+
+## v0.18.15: Stable Hybrid Selected 3-digit NDC Routing
+
+v0.18.14 reached 32/33 on the selected 3-digit regression. The only remaining
+failure was a semantic boundary error between 490 (medicine) and 596
+(food/cooking).
+
+v0.18.15 keeps semantic beam routing as the primary mechanism and adds a small
+deterministic exact-code prior from `ndc.py` only when keyword classification
+selects one of the supported 3-digit codes.
+
+```text
+beam_score
+  = semantic_similarity
+  + main_class_prior
+  + selected_keyword_prior
+```
+
+The keyword prior is intentionally small and acts only as a fine-code
+tie-breaker. UNKNOWN protection and strict unknown rescue remain unchanged.
+
+Files:
+
+- `ndc_hierarchy_stable_v01815.py`
+- `verify_ndc_hierarchy_stable_v01815.py`
+- `chat.py` adds `/ndc3stable <text>`
+
+Run:
+
+```powershell
+python .\verify_ndc_hierarchy_stable_v01815.py
+```
