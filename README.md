@@ -1076,3 +1076,46 @@ The first goal is not to exceed the v0.18.3 raw baseline immediately, but to
 verify that a leakage-free calibration can preserve approximately 70% raw
 accuracy while recovering useful known acceptance without sacrificing unknown
 rejection.
+
+
+## v0.18.7: Confusion-Aware Prototype Augmentation
+
+v0.18.6 produced a trustworthy leakage-free result:
+
+- raw accuracy: 66.67%
+- known acceptance: 40.00%
+- unknown rejection: 100.00%
+
+This confirmed that the residual projection preserves the original semantic
+geometry but does not improve routing beyond the v0.18.3 multi-prototype
+baseline. The dominant remaining errors are concentrated in NDC 2/3/4 and
+8/9, with selected NDC 7 confusions.
+
+v0.18.7 therefore returns to the strongest idea from v0.18.3: local semantic
+prototypes. The experiment adds targeted representative phrases for the
+confused regions while keeping the base model frozen.
+
+To keep evaluation valid, v0.18.7 does NOT reuse the previous final test as a
+fresh final benchmark. Instead it introduces a NEW FINAL-V2 holdout and compares:
+
+```text
+A) TRAIN-ONLY BASELINE
+   40 original prototypes
+
+B) CONFUSION-AWARE AUGMENTED
+   40 original train-only prototypes
+   + targeted extra prototypes
+```
+
+Calibration uses only the original DEV subset and DEV unknown probes.
+
+Run:
+
+```powershell
+git switch v0.18.7
+python .\run_ndc_confusion_prototypes_v0187.py
+```
+
+The script reports FINAL-V2 raw accuracy, known acceptance, unknown rejection,
+balanced score, per-class results, and the delta between augmented and baseline
+routing.
