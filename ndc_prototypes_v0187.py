@@ -25,10 +25,15 @@ from typing import Dict, Tuple
 from ndc_semantic_router_v0182 import NDC_MAIN_SEEDS
 
 
-AUGMENTED_NDC_SEEDS: Dict[str, Tuple[str, ...]] = {
-    **NDC_MAIN_SEEDS,
+TRAIN_ONLY_NDC_SEEDS: Dict[str, Tuple[str, ...]] = {
+    main: tuple(texts[:4])
+    for main, texts in NDC_MAIN_SEEDS.items()
+}
 
-    "2": NDC_MAIN_SEEDS["2"] + (
+AUGMENTED_NDC_SEEDS: Dict[str, Tuple[str, ...]] = {
+    **TRAIN_ONLY_NDC_SEEDS,
+
+    "2": TRAIN_ONLY_NDC_SEEDS["2"] + (
         "江戸時代と日本史",
         "歴史上の人物の生涯",
         "近代史と社会の変化",
@@ -37,7 +42,7 @@ AUGMENTED_NDC_SEEDS: Dict[str, Tuple[str, ...]] = {
         "歴史資料を読む",
     ),
 
-    "3": NDC_MAIN_SEEDS["3"] + (
+    "3": TRAIN_ONLY_NDC_SEEDS["3"] + (
         "景気と経済市場",
         "教育制度と学校政策",
         "法律と社会制度の関係",
@@ -46,7 +51,7 @@ AUGMENTED_NDC_SEEDS: Dict[str, Tuple[str, ...]] = {
         "経済学と社会科学",
     ),
 
-    "4": NDC_MAIN_SEEDS["4"] + (
+    "4": TRAIN_ONLY_NDC_SEEDS["4"] + (
         "ブラックホールと宇宙物理",
         "化学反応と物質",
         "生物進化と生命科学",
@@ -55,14 +60,14 @@ AUGMENTED_NDC_SEEDS: Dict[str, Tuple[str, ...]] = {
         "科学的観測と実験",
     ),
 
-    "7": NDC_MAIN_SEEDS["7"] + (
+    "7": TRAIN_ONLY_NDC_SEEDS["7"] + (
         "絵画作品を鑑賞する",
         "美術館と芸術作品",
         "音楽作品と演奏",
         "スポーツ競技と体育",
     ),
 
-    "8": NDC_MAIN_SEEDS["8"] + (
+    "8": TRAIN_ONLY_NDC_SEEDS["8"] + (
         "英単語と語彙",
         "日本語文法と文章表現",
         "翻訳と言語変換",
@@ -71,7 +76,7 @@ AUGMENTED_NDC_SEEDS: Dict[str, Tuple[str, ...]] = {
         "言語表現を比較する",
     ),
 
-    "9": NDC_MAIN_SEEDS["9"] + (
+    "9": TRAIN_ONLY_NDC_SEEDS["9"] + (
         "詩の表現と文学",
         "作家と文学作品",
         "小説と物語文学",
