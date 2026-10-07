@@ -1357,3 +1357,41 @@ Run:
 ```powershell
 python .\verify_ndc_hierarchy_v01812.py
 ```
+
+
+## v0.18.13: Beam Hierarchical 3-digit NDC Routing
+
+v0.18.12 showed that many 3-digit failures were caused by an incorrect Stage-1
+main class. The correct 3-digit code was then excluded before fine routing.
+
+v0.18.13 replaces the hard Stage-1 restriction with a soft prior:
+
+```text
+beam_score(code)
+  = code_similarity
+  + main_bonus if code matches Stage-1 main
+```
+
+All selected 3-digit codes remain eligible. A strong fine-grained prototype can
+therefore rescue an incorrect Stage-1 main classification.
+
+States remain:
+
+- UNKNOWN
+- MAIN_ONLY
+- ACCEPT
+
+The runtime also reports `rescued_main=True` when the accepted 3-digit code
+belongs to a different main class than the Stage-1 prediction.
+
+Files:
+
+- `ndc_hierarchy_beam_v01813.py`
+- `verify_ndc_hierarchy_beam_v01813.py`
+- `chat.py` adds `/ndc3beam <text>`
+
+Run:
+
+```powershell
+python .\verify_ndc_hierarchy_beam_v01813.py
+```
