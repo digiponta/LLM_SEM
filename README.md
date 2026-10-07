@@ -1259,3 +1259,69 @@ Target criteria:
 - raw augmented accuracy >= 80%
 - known acceptance >= 60%
 - unknown rejection >= 80%
+
+
+## v0.18.11: Stable NDC Runtime Integration
+
+v0.18.10 established the current stable NDC architecture:
+
+- raw augmented NDC accuracy: 93.33%
+- known acceptance: 93.33%
+- unknown rejection: 100.00%
+- balanced score: 96.67%
+
+The classifier and unknown detector are intentionally separated:
+
+```text
+Frozen semantic encoder
+        |
+        +--> Augmented NDC prototype classifier --> NDC main class
+        |
+        +--> Contrastive unknown prototypes
+                    |
+                    v
+          known_similarity - unknown_similarity
+                    |
+                    v
+               ACCEPT / UNKNOWN
+```
+
+v0.18.11 packages this architecture into `StableNDCRouter` and integrates it
+into `chat.py` as an independent runtime command.
+
+Files:
+
+- `ndc_runtime_v01811.py` — reusable stable runtime router
+- `verify_ndc_runtime_v01811.py` — known/unknown regression
+- `chat.py` — adds `/ndc <text>`
+
+The NDC runtime uses its own frozen checkpoint by default:
+
+```text
+model/model-sem-internalized-v01575.pt
+```
+
+This keeps NDC classification stable even when the live chat model changes
+through `/sleep`, `/repair`, or reload operations.
+
+Run regression:
+
+```powershell
+python .\verify_ndc_runtime_v01811.py
+```
+
+Run chat:
+
+```powershell
+python .\chat.py
+```
+
+Examples:
+
+```text
+/ndc 化学物質の反応を観察する
+/ndc 近代日本の歴史を学ぶ
+/ndc それについてお願いします
+```
+
+UNKNOWN remains a separate classification state and is never mapped to NDC 000.
