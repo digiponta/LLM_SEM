@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_SEM v0.18.0 interactive chat with Semantic Memory /sleep.
+LLM_SEM v0.18.11 interactive chat with Stable NDC Runtime + Semantic Memory /sleep.
 
 Commands
 --------
 /help
+/ndc <text>
 /teach <prompt> => <answer>
 /memory
 /protected
@@ -52,9 +53,11 @@ from semantic_proposition_v0180 import (
     load_propositions,
 )
 from ndc import classify_memory, enrich_memory_item
+from ndc_runtime_v01811 import StableNDCRouter
 
 
 DEFAULT_BASE_MODEL = "model/model-sem-internalized-v01575.pt"
+DEFAULT_NDC_MODEL = DEFAULT_BASE_MODEL
 DEFAULT_TOKENIZER = "model/tokenizer.json"
 DEFAULT_MEMORY = "data/semantic_memory_v0160.jsonl"
 DEFAULT_PROTECTED = "data/protected_knowledge_v0167.jsonl"
@@ -115,6 +118,11 @@ def parse_args():
         ),
     )
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
+    p.add_argument(
+        "--ndc-model",
+        default=DEFAULT_NDC_MODEL,
+        help="Frozen checkpoint used by the stable v0.18.11 NDC runtime router.",
+    )
     p.add_argument("--memory", default=DEFAULT_MEMORY)
     p.add_argument("--protected", default=DEFAULT_PROTECTED)
     p.add_argument("--propositions", default=DEFAULT_PROPOSITION_STORE)
@@ -1971,6 +1979,10 @@ def print_help() -> None:
     print(
         """
 Commands:
+  /ndc <text>
+      Route text with the stable v0.18.11 NDC classifier + contrastive
+      unknown gate. UNKNOWN is kept separate from NDC 000.
+
   /teach <prompt> => <answer>
       Add one persistent Semantic Memory item.
 
@@ -2020,6 +2032,7 @@ def main():
     device = choose_device(args.device)
 
     tokenizer_path = Path(args.tokenizer)
+    ndc_model_path = Path(args.ndc_model)
     memory_path = Path(args.memory)
     protected_path = Path(args.protected)
     proposition_path = Path(args.propositions)
@@ -2040,6 +2053,10 @@ def main():
         )
     if not tokenizer_path.exists():
         raise FileNotFoundError(tokenizer_path)
+    if not ndc_model_path.exists():
+        raise FileNotFoundError(
+            f"NDC runtime model not found: {ndc_model_path}"
+        )
     if not gate_base_path.exists():
         raise FileNotFoundError(
             f"Gate base model not found: {gate_base_path}"
@@ -2055,6 +2072,18 @@ def main():
         device=device,
     )
     model.eval()
+
+    ndc_model, ndc_checkpoint = LanguageModel.load_checkpoint(
+        str(ndc_model_path),
+        device=device,
+    )
+    ndc_model.eval()
+    for parameter in ndc_model.parameters():
+        parameter.requires_grad_(False)
+    ndc_router = StableNDCRouter(
+        ndc_model,
+        tokenizer,
+    )
 
     gate_base_model, _gate_base_checkpoint = LanguageModel.load_checkpoint(
         str(gate_base_path),
@@ -2088,7 +2117,7 @@ def main():
     )
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.18.1 NDC Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.18.11 Stable NDC Runtime + Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -2097,6 +2126,9 @@ def main():
     print("Startup source  :", startup_source)
     print("Model state     :", model_state_path)
     print("Tokenizer       :", tokenizer_path)
+    print("NDC model       :", ndc_model_path)
+    print("NDC ckpt loss   :", ndc_checkpoint.get("loss"))
+    print("NDC runtime     : v0.18.11 contrastive stable")
     print("Parameters      :", f"{model.parameter_count:,}")
     print("Context length  :", model.context_length)
     print("Semantic memory :", memory_path)
@@ -2115,7 +2147,7 @@ def main():
     print("Unknown th      :", args.unknown_threshold)
     print()
     print(
-        "Commands: /teach, /memory, /protected, /propteach, /prop, /props, "
+        "Commands: /ndc, /teach, /memory, /protected, /propteach, /prop, /props, "
         "/repair, /sleep, /model, /reload, /help, /quit"
     )
     print()
@@ -2135,6 +2167,34 @@ def main():
 
         if raw == "/help":
             print_help()
+            continue
+
+        if raw.startswith("/ndc"):
+            text = raw[len("/ndc"):].strip()
+            if not text:
+                print("NDC> usage: /ndc <text>")
+                continue
+
+            decision = ndc_router.route(text)
+            if decision.accepted:
+                print(
+                    f"NDC> ACCEPT main={decision.ndc_main} "
+                    f"name={decision.ndc_name} "
+                    f"known={decision.known_similarity:.6f} "
+                    f"unknown={decision.unknown_similarity:.6f} "
+                    f"contrast={decision.contrast:+.6f} "
+                    f"margin={decision.margin:+.6f} "
+                    f"score={decision.gate_score:.6f}"
+                )
+            else:
+                print(
+                    "NDC> UNKNOWN "
+                    f"known={decision.known_similarity:.6f} "
+                    f"unknown={decision.unknown_similarity:.6f} "
+                    f"contrast={decision.contrast:+.6f} "
+                    f"margin={decision.margin:+.6f} "
+                    f"score={decision.gate_score:.6f}"
+                )
             continue
 
         if raw == "/memory":
