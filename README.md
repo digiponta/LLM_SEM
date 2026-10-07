@@ -1503,3 +1503,311 @@ python .\verify_ndc_stable_v01816.py
 ```
 
 See `RELEASE_NOTES_v0.18.16.md` for the full experiment history and stable architecture.
+
+
+## v0.19.0: Independent Holdout Generalization Evaluation
+
+v0.18.16 established a stable NDC runtime with:
+
+- main-class regression: 16/16 PASS
+- selected 3-digit regression: 33/33 PASS
+
+v0.19.0 does not modify the router. It freezes the stable runtime and evaluates
+generalization on a new independent holdout:
+
+- 60 known probes
+- 30 selected 3-digit codes
+- 2 unseen paraphrases per code
+- 12 UNKNOWN probes
+- no calibration on the holdout
+
+Run:
+
+```powershell
+python .\verify_ndc_independent_v0190.py
+```
+
+Primary metrics:
+
+- raw known accuracy
+- known accepted accuracy
+- known coverage
+- unknown reject rate
+- balanced score
+
+This experiment is intended to separate regression success from real
+generalization performance before expanding the selected NDC code set.
+
+
+## v0.19.1: Prototype Coverage Expansion
+
+v0.19.0 independent holdout evaluation exposed a large gap between regression
+success and paraphrase generalization. The frozen stable router achieved:
+
+- raw known accuracy: 45.00%
+- known accepted accuracy: 45.00%
+- known coverage: 76.67%
+- unknown reject: 66.67%
+- balanced score: 55.83%
+
+v0.19.1 keeps the semantic encoder and stable routing logic frozen, but expands
+selected 3-digit prototype coverage with additional paraphrase anchors.
+
+Important evaluation rule:
+
+- v0.19.0 holdout wording is not copied into the new prototypes
+- evaluation uses a separate HOLDOUT-V2
+- no calibration is performed on HOLDOUT-V2
+
+Files:
+
+- `ndc_hierarchy_coverage_v0191.py`
+- `verify_ndc_coverage_v0191.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_coverage_v0191.py
+```
+
+The script compares v0.18.16 stable vs v0.19.1 coverage-expanded routing on the
+same new independent holdout and reports metric deltas.
+
+
+## v0.19.2: Expanded UNKNOWN Gate
+
+v0.19.1 improved independent known-code generalization substantially:
+
+- raw known accuracy: 83.33%
+- known accepted accuracy: 83.33%
+- known coverage: 91.67%
+- unknown reject: 66.67%
+- balanced score: 75.00%
+
+The remaining bottleneck is UNKNOWN detection.
+
+v0.19.2 keeps the coverage-expanded 3-digit router fixed and strengthens only
+the contrastive UNKNOWN gate by adding underspecified, referent-free, and
+gibberish-like UNKNOWN prototypes.
+
+Evaluation uses a new HOLDOUT-V3:
+
+- 30 known probes
+- 16 UNKNOWN probes
+- no calibration
+
+Files:
+
+- `ndc_unknown_expanded_v0192.py`
+- `ndc_hierarchy_unknown_v0192.py`
+- `verify_ndc_unknown_v0192.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_unknown_v0192.py
+```
+
+Target:
+
+- raw known accuracy >= 75%
+- known accepted accuracy >= 70%
+- UNKNOWN reject >= 80%
+- balanced score improves over v0.19.1 on the same HOLDOUT-V3
+
+
+## v0.19.4: Conditional Rescue + Pairwise Adjudication
+
+v0.19.3 showed no improvement over v0.19.2 and reduced known coverage by 3.33 pp.
+The remaining errors are not a general prototype-coverage problem.
+
+v0.19.4 keeps the v0.19.2 generalized router and adds only local decisions:
+
+- keyword-supported UNKNOWN rescue for 150 ethics and 490 medicine
+- pairwise adjudication for 007 vs 548
+- pairwise adjudication for 900 vs 910
+
+Global thresholds and the expanded UNKNOWN gate remain unchanged.
+
+Evaluation uses a new HOLDOUT-V5 with no calibration.
+
+Files:
+
+- `ndc_hierarchy_adjudication_v0194.py`
+- `verify_ndc_adjudication_v0194.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_adjudication_v0194.py
+```
+
+Target:
+
+- raw known accuracy >= 93%
+- known accepted accuracy >= 90%
+- UNKNOWN reject >= 90%
+- balanced score improves over v0.19.2 on the same HOLDOUT-V5
+
+
+## v0.19.5: Generalization Stable Candidate
+
+v0.19.4 passed independent HOLDOUT-V5 with:
+
+- raw known accuracy: 96.67%
+- known accepted accuracy: 96.67%
+- known coverage: 96.67%
+- unknown reject: 100.00%
+- balanced score: 98.33%
+
+The only remaining known failure was NDC 830 returning MAIN_ONLY because the
+beam margin was just below threshold.
+
+v0.19.5 adds only a small local NDC 830 bonus when explicit English-language
+evidence is present. Global thresholds, UNKNOWN logic, and all other
+adjudication rules are unchanged.
+
+Evaluation uses a new HOLDOUT-V6 with no calibration.
+
+Files:
+
+- `ndc_hierarchy_final_v0195.py`
+- `verify_ndc_final_v0195.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_final_v0195.py
+```
+
+Stable-candidate target:
+
+- raw known accuracy >= 97%
+- known accepted accuracy >= 97%
+- known coverage >= 97%
+- UNKNOWN reject >= 95%
+- balanced score >= 96%
+
+
+## v0.19.6: Final Generalization Stable Candidate
+
+v0.19.5 improved NDC 830 but still left one NDC 930 MAIN_ONLY case on
+independent HOLDOUT-V6. The remaining failure was caused by a very small
+beam margin rather than a wrong semantic winner.
+
+v0.19.6 adds only a small local NDC 930 bonus when explicit
+English/American literature evidence is present. Global thresholds,
+UNKNOWN handling, and all earlier local rules remain unchanged.
+
+Evaluation uses a new HOLDOUT-V7 with no calibration.
+
+Files:
+
+- `ndc_hierarchy_final_v0196.py`
+- `verify_ndc_final_v0196.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_final_v0196.py
+```
+
+Stable-candidate target:
+
+- raw known accuracy >= 97%
+- known accepted accuracy >= 97%
+- known coverage >= 97%
+- UNKNOWN reject >= 95%
+- balanced score >= 96%
+
+
+## v0.19.7: Cross-Holdout Robustness Sweep
+
+v0.19.6 did not improve HOLDOUT-V7. Rather than adding more local rules for a
+single holdout, v0.19.7 performs a retrospective robustness sweep across
+HOLDOUT-V3 through HOLDOUT-V7.
+
+Compared routers:
+
+- v0.19.2 coverage + expanded UNKNOWN
+- v0.19.4 conditional rescue + pairwise adjudication
+- v0.19.5 local 830 stabilization
+- v0.19.6 local 930 stabilization
+
+Metrics are reported per holdout and as aggregate mean/minimum values.
+
+Important:
+This is a retrospective robustness study, not a fully independent final
+benchmark, because later router variants were designed after observing failures
+on earlier holdouts.
+
+File:
+
+- `verify_ndc_robustness_v0197.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_robustness_v0197.py
+```
+
+The sweep ranks variants primarily by minimum balanced score, then by mean
+balanced score. This prevents a router from being promoted solely because it
+performs extremely well on one specific holdout.
+
+
+## v0.19.8: Generalized Stable NDC Runtime Integration
+
+v0.19.7 cross-holdout robustness sweep selected v0.19.6 as the strongest
+selected 3-digit router across HOLDOUT-V3 through HOLDOUT-V7:
+
+- mean known accepted accuracy: 96.00%
+- mean UNKNOWN rejection: 93.75%
+- mean balanced score: 94.88%
+- minimum known accepted accuracy: 90.00%
+- minimum UNKNOWN rejection: 87.50%
+- minimum balanced score: 88.75%
+- robustness result: ROBUST_CANDIDATE
+
+v0.19.8 promotes the v0.19.6 selected 3-digit router to the default chat
+runtime path:
+
+```text
+/ndc <text>   -> v0.18.11 stable main-class router
+/ndc3 <text>  -> v0.19.6 generalized selected 3-digit router
+```
+
+The NDC runtime continues to use the dedicated frozen semantic checkpoint:
+
+```text
+model/model-sem-internalized-v01575.pt
+```
+
+This keeps classification independent from chat-model changes caused by
+`/sleep`, `/repair`, or runtime model reloads.
+
+Integrated verification:
+
+```powershell
+python .\verify_ndc_stable_v0198.py
+```
+
+The integration verifier runs:
+
+1. v0.18.16 stable main-class / selected-code regression
+2. v0.19.7 cross-holdout robustness sweep
+
+Promotion target:
+
+```text
+stable main-class runtime          : READY
+generalized selected-3digit router: READY
+chat /ndc3 promotion              : READY
+RESULT                             : PASS
+```
+
+Important evaluation note:
+The V3-V7 robustness sweep is retrospective because later router variants were
+designed after observing earlier holdout failures. Therefore v0.19.8 should be
+described as a robust stable runtime candidate, not as proof of fully independent
+generalization over the full NDC taxonomy.
