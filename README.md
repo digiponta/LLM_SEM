@@ -1719,3 +1719,38 @@ Stable-candidate target:
 - known coverage >= 97%
 - UNKNOWN reject >= 95%
 - balanced score >= 96%
+
+
+## v0.19.7: Cross-Holdout Robustness Sweep
+
+v0.19.6 did not improve HOLDOUT-V7. Rather than adding more local rules for a
+single holdout, v0.19.7 performs a retrospective robustness sweep across
+HOLDOUT-V3 through HOLDOUT-V7.
+
+Compared routers:
+
+- v0.19.2 coverage + expanded UNKNOWN
+- v0.19.4 conditional rescue + pairwise adjudication
+- v0.19.5 local 830 stabilization
+- v0.19.6 local 930 stabilization
+
+Metrics are reported per holdout and as aggregate mean/minimum values.
+
+Important:
+This is a retrospective robustness study, not a fully independent final
+benchmark, because later router variants were designed after observing failures
+on earlier holdouts.
+
+File:
+
+- `verify_ndc_robustness_v0197.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_robustness_v0197.py
+```
+
+The sweep ranks variants primarily by minimum balanced score, then by mean
+balanced score. This prevents a router from being promoted solely because it
+performs extremely well on one specific holdout.
