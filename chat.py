@@ -58,6 +58,7 @@ from ndc_hierarchy_v01812 import HierarchicalNDCRouter
 from ndc_hierarchy_beam_v01813 import BeamHierarchicalNDCRouter
 from ndc_hierarchy_rescue_v01814 import RescueBeamNDCRouter
 from ndc_hierarchy_stable_v01815 import StableHybridNDCRouter
+from ndc_hierarchy_final_v0196 import FinalStableNDCRouterV0196
 
 
 DEFAULT_BASE_MODEL = "model/model-sem-internalized-v01575.pt"
@@ -1988,8 +1989,8 @@ Commands:
       contrastive unknown gate.
 
   /ndc3 <text>
-      Run the stable v0.18.16 selected 3-digit NDC router.
-      This is the default production path.
+      Run the v0.19.6 generalized selected 3-digit NDC router.
+      This is the default production path promoted by v0.19.8.
 
   /ndc3beam <text>
       Run v0.18.13 beam hierarchical routing.
@@ -2118,6 +2119,10 @@ def main():
         ndc_model,
         tokenizer,
     )
+    ndc3_generalized_router = FinalStableNDCRouterV0196(
+        ndc_model,
+        tokenizer,
+    )
 
     gate_base_model, _gate_base_checkpoint = LanguageModel.load_checkpoint(
         str(gate_base_path),
@@ -2151,7 +2156,7 @@ def main():
     )
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.18.16 Stable Hierarchical NDC Runtime + Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.19.8 Generalized Stable NDC Runtime + Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -2162,7 +2167,7 @@ def main():
     print("Tokenizer       :", tokenizer_path)
     print("NDC model       :", ndc_model_path)
     print("NDC ckpt loss   :", ndc_checkpoint.get("loss"))
-    print("NDC runtime     : v0.18.11 contrastive stable")
+    print("NDC runtime     : main=v0.18.11 / selected-3digit=v0.19.6 robust candidate")
     print("Parameters      :", f"{model.parameter_count:,}")
     print("Context length  :", model.context_length)
     print("Semantic memory :", memory_path)
@@ -2209,7 +2214,7 @@ def main():
                 print("NDC3S> usage: /ndc3stable <text>")
                 continue
 
-            decision = ndc3_stable_router.route(text)
+            decision = ndc3_generalized_router.route(text)
             if decision.state == "ACCEPT":
                 print(
                     f"NDC3S> ACCEPT stage1={decision.stage1_main} "
