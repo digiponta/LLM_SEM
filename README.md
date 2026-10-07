@@ -1467,3 +1467,39 @@ Run:
 ```powershell
 python .\verify_ndc_hierarchy_stable_v01815.py
 ```
+
+
+## v0.18.16: Stable NDC Runtime Consolidation
+
+v0.18.16 promotes the NDC semantic-routing work to the stable runtime path.
+
+Stable verification combines:
+
+- main-class NDC regression: 16/16 PASS
+- selected 3-digit NDC regression: 33/33 PASS
+
+Default chat commands:
+
+```text
+/ndc <text>   # stable main-class routing
+/ndc3 <text>  # stable selected 3-digit routing
+```
+
+The selected 3-digit path uses:
+
+```text
+semantic beam routing
++ main-class soft prior
++ strict UNKNOWN rescue
++ small keyword tie-break prior
+```
+
+UNKNOWN remains separate from NDC 000.
+
+Run the integrated stable regression:
+
+```powershell
+python .\verify_ndc_stable_v01816.py
+```
+
+See `RELEASE_NOTES_v0.18.16.md` for the full experiment history and stable architecture.
