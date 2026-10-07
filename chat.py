@@ -51,6 +51,7 @@ from semantic_proposition_v0180 import (
     compose_subject,
     load_propositions,
 )
+from ndc import classify_memory, enrich_memory_item
 
 
 DEFAULT_BASE_MODEL = "model/model-sem-internalized-v01575.pt"
@@ -103,7 +104,7 @@ PROTECTED_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.18.0 Chat + /sleep internalization"
+        description="LLM_SEM v0.18.1 NDC Chat + /sleep internalization"
     )
     p.add_argument(
         "--model",
@@ -240,11 +241,17 @@ def choose_device(name: str) -> torch.device:
     return torch.device(name)
 
 
-def load_knowledge(path: Path) -> List[Dict[str, str]]:
+def load_knowledge(path: Path) -> List[Dict[str, object]]:
+    """Load knowledge and attach NDC metadata without rewriting old files.
+
+    Historical Semantic Memory rows containing only prompt/answer remain valid.
+    Missing NDC fields are classified on read; newly taught rows persist them.
+    UNKNOWN is represented separately from NDC 000.
+    """
     if not path.exists():
         return []
 
-    rows: List[Dict[str, str]] = []
+    rows: List[Dict[str, object]] = []
     with path.open("r", encoding="utf-8") as f:
         for line_no, raw in enumerate(f, 1):
             raw = raw.strip()
@@ -258,7 +265,9 @@ def load_knowledge(path: Path) -> List[Dict[str, str]]:
             prompt = str(item.get("prompt", "")).strip()
             answer = str(item.get("answer", "")).strip()
             if prompt and answer:
-                rows.append({"prompt": prompt, "answer": answer})
+                item["prompt"] = prompt
+                item["answer"] = answer
+                rows.append(enrich_memory_item(item))
     return rows
 
 
@@ -275,11 +284,21 @@ def validate_protected_knowledge(
         )
 
 
-def append_memory(path: Path, prompt: str, answer: str) -> None:
+def append_memory(path: Path, prompt: str, answer: str) -> Dict[str, object]:
     path.parent.mkdir(parents=True, exist_ok=True)
-    item = {"prompt": prompt, "answer": answer}
+    ndc = classify_memory(prompt, answer)
+    item: Dict[str, object] = {
+        "prompt": prompt,
+        "answer": answer,
+        "ndc_code": ndc.code,
+        "ndc_main": ndc.main,
+        "ndc_name": ndc.name,
+        "classification_state": ndc.state,
+        "ndc_source": ndc.source,
+    }
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(item, ensure_ascii=False) + "\n")
+    return item
 
 
 RUNTIME_TRAILING_PUNCTUATION = "、，,。．.!！?？:：;；"
@@ -1956,7 +1975,7 @@ Commands:
       Add one persistent Semantic Memory item.
 
   /memory
-      Show current Semantic Memory.
+      Show current Semantic Memory with NDC domain metadata.
 
   /protected
       Show validated canonical knowledge.
@@ -2069,7 +2088,7 @@ def main():
     )
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.18.0 Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.18.1 NDC Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -2125,8 +2144,12 @@ def main():
             else:
                 print(f"MEM> {len(memory)} entries")
                 for index, item in enumerate(memory, 1):
+                    code = item.get("ndc_code") or "---"
+                    name = item.get("ndc_name") or "未分類"
+                    state = item.get("classification_state") or "UNKNOWN"
                     print(
-                        f"  {index:02d}. {item['prompt']} => {item['answer']}"
+                        f"  {index:02d}. [NDC {code} {name} / {state}] "
+                        f"{item['prompt']} => {item['answer']}"
                     )
             continue
 
@@ -2204,10 +2227,13 @@ def main():
                 print("MEM> prompt and answer must both be non-empty")
                 continue
 
-            append_memory(memory_path, prompt, answer)
+            stored = append_memory(memory_path, prompt, answer)
             memory = load_knowledge(memory_path)
+            code = stored.get("ndc_code") or "---"
+            name = stored.get("ndc_name") or "未分類"
+            state = stored.get("classification_state") or "UNKNOWN"
             print(
-                f"MEM> stored #{len(memory)}: "
+                f"MEM> stored #{len(memory)} [NDC {code} {name} / {state}]: "
                 f"{prompt} => {answer}"
             )
             continue
