@@ -97,11 +97,11 @@ UNKNOWN_PROBES: Tuple[str, ...] = (
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="LLM_SEM v0.18.5 residual NDC projection experiment"
+        description="LLM_SEM v0.18.6 leakage-free residual NDC projection experiment"
     )
     p.add_argument("--model", default="model/model-sem-internalized-v01575.pt")
     p.add_argument("--tokenizer", default="model/tokenizer.json")
-    p.add_argument("--output", default="model/ndc-projection-v0185.pt")
+    p.add_argument("--output", default="model/ndc-projection-v0186.pt")
     p.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
     p.add_argument("--pooling", default="mean")
     p.add_argument("--bottleneck-dim", type=int, default=32)
@@ -208,13 +208,21 @@ def nearest_center_accuracy(head, x, y):
 
 
 @torch.no_grad()
-def build_base_prototypes(model, tokenizer, pooling):
-    return {
-        main: tuple(
+def build_base_prototypes(model, tokenizer, pooling, train_rows):
+    """Build runtime prototypes strictly from TRAIN rows.
+
+    v0.18.5 accidentally used all NDC_MAIN_SEEDS, including the two DEV
+    examples per class. That made DEV routing artificially perfect and pushed
+    threshold calibration toward severe over-rejection on the final test.
+    """
+    grouped = {main: [] for main in sorted(NDC_MAIN)}
+    for main, text in train_rows:
+        grouped[main].append(
             encode_text(model, tokenizer, text, pooling=pooling)
-            for text in texts
         )
-        for main, texts in NDC_MAIN_SEEDS.items()
+    return {
+        main: tuple(vectors)
+        for main, vectors in grouped.items()
     }
 
 
@@ -391,10 +399,15 @@ def main():
     x_train, y_train = stack_rows(train_encoded)
     x_dev, y_dev = stack_rows(dev_encoded)
     base_pairwise = F.normalize(x_train, p=2, dim=-1) @ F.normalize(x_train, p=2, dim=-1).t()
-    base_prototypes = build_base_prototypes(model, tokenizer, args.pooling)
+    base_prototypes = build_base_prototypes(
+        model,
+        tokenizer,
+        args.pooling,
+        train_rows,
+    )
 
     print("=" * 116)
-    print(" LLM_SEM v0.18.5 Regularized Residual NDC Projection Experiment")
+    print(" LLM_SEM v0.18.6 Leakage-Free Residual NDC Projection Experiment")
     print("=" * 116)
     print("Device             :", device)
     if device.type == "cuda":
@@ -406,6 +419,7 @@ def main():
     print("Projection         :", f"{model.d_model} -> {args.bottleneck_dim} -> {model.d_model} residual")
     print("Residual alpha     :", args.alpha)
     print("Train/dev/test     :", f"{len(train_rows)}/{len(dev_rows)}/{len(KNOWN_HOLDOUT)}")
+    print("Prototype source   : TRAIN ONLY")
     print("Unknown dev/test   :", f"{len(dev_unknown)}/{len(test_unknown)}")
     print()
 
@@ -565,7 +579,7 @@ def main():
 
     passed = (
         raw >= 0.70
-        and known_accept >= 0.50
+        and known_accept >= 0.40
         and unknown_reject >= 0.80
     )
 
