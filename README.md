@@ -1020,3 +1020,59 @@ Files:
 
 This stage is intentionally limited to NDC main classes 0-9. Three-digit NDC
 routing will be attempted only after the projected main-class space is stable.
+
+
+## v0.18.6: Leakage-Free Residual NDC Projection
+
+v0.18.5 preserved the v0.18.3 raw routing baseline (70.00%) but final known
+acceptance collapsed to 3.33%. The cause was calibration leakage: runtime
+prototypes were built from all six NDC seed texts per class, while the final two
+texts per class were also used as DEV samples. DEV therefore contained its own
+prototype texts and reported an artificial 100% routing/acceptance score.
+
+v0.18.6 fixes the protocol:
+
+```text
+40 TRAIN samples
+   |
+   +--> projection training
+   |
+   +--> runtime NDC prototypes (TRAIN ONLY)
+
+20 DEV samples
+   |
+   +--> seed/model selection
+   +--> top-k / weight / similarity / margin calibration
+
+30 FINAL TEST samples
+   |
+   +--> untouched until the final report
+```
+
+Unknown probes are also split into DEV and FINAL subsets.
+
+The residual projection remains near identity:
+
+```text
+64 -> 32 -> 64 residual
+z = normalize(x + alpha * delta(x))
+alpha = 0.25
+```
+
+Run:
+
+```powershell
+git switch v0.18.6
+python .\run_ndc_projection_v0186.py
+```
+
+Output checkpoint:
+
+```text
+model/ndc-projection-v0186.pt
+```
+
+The first goal is not to exceed the v0.18.3 raw baseline immediately, but to
+verify that a leakage-free calibration can preserve approximately 70% raw
+accuracy while recovering useful known acceptance without sacrificing unknown
+rejection.
