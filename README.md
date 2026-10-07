@@ -801,3 +801,42 @@ semantic memories can be safely internalized under arbitrary conditions.
 
 See `RELEASE_NOTES_v0.15.7.5.md` for the experiment history and validation
 summary.
+
+
+## v0.18.1: NDC-based domain classification
+
+LLM_SEM now uses the Nippon Decimal Classification (NDC) as the common domain
+taxonomy for Semantic Memory metadata.
+
+- The historical labels `computer / science / animal / weather / food / transport`
+  map to `007 / 400 / 480 / 451 / 596 / 680`.
+- New Semantic Memory rows persist `ndc_code`, `ndc_main`, `ndc_name`,
+  `classification_state`, and `ndc_source`.
+- Existing prompt/answer-only memory files remain compatible: NDC metadata is
+  attached at load time without rewriting the source file.
+- `UNKNOWN` is deliberately separate from NDC `000`; code `000` remains the
+  valid NDC class for General Works.
+- NDC is a domain axis only. Semantic vectors, proposition structure,
+  internalized gating, protected knowledge, and `/sleep` continue to operate
+  independently.
+
+Representative mapping:
+
+| Domain | NDC |
+|---|---:|
+| Information science / AI / LLM / CPU / GPU | 007 |
+| Mathematics | 410 |
+| Physics / quantum mechanics | 420 |
+| Astronomy / space science | 440 |
+| Meteorology | 451 |
+| Zoology | 480 |
+| Food / cooking | 596 |
+| Transportation | 680 |
+| Language | 800-series |
+| Literature | 900-series |
+
+Regression:
+
+```powershell
+python .\run_ndc_classification_v0181.py
+```
