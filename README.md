@@ -931,3 +931,92 @@ python .\run_ndc_semantic_prototypes_v0183.py
 
 The model remains frozen. This branch tests whether local prototype structure
 can recover NDC separability before any learned projection is introduced.
+
+
+## v0.18.4: NDC-Specific Semantic Projection Head
+
+v0.18.3 established the multi-prototype baseline:
+
+- raw accuracy: 70.00%
+- known acceptance: 50.00%
+- unknown rejection: 100.00%
+
+v0.18.4 adds a learned NDC-specific projection space while keeping the base
+LLM completely frozen.
+
+Architecture:
+
+```text
+Frozen Base LLM
+    |
+    v
+Base Semantic Vector (d_model=256)
+    |
+    v
+Linear 256 -> 128
+    |
+   GELU
+    |
+ LayerNorm
+    |
+    v
+Linear 128 -> 64
+    |
+ L2 normalize
+    |
+    v
+Projected NDC Space
+    |
+    +--> Multi-Prototype Routing
+    |
+    +--> Similarity + Margin Unknown Gate
+```
+
+Only the projection module and its temporary cosine-classifier prototypes are
+trained. The base LLM parameters are explicitly set to `requires_grad=False`.
+
+Training objective:
+
+```text
+loss =
+    cosine prototype cross entropy
+  + 0.25 * same-class compactness
+  + 0.10 * inter-class separation
+```
+
+The experiment runs five initialization seeds by default and automatically
+selects the best projected router after re-calibrating:
+
+- prototype top-k
+- nearest-prototype weight
+- similarity threshold
+- class-margin threshold
+
+Run:
+
+```powershell
+git switch v0.18.4
+python .\run_ndc_projection_v0184.py
+```
+
+Output checkpoint:
+
+```text
+model/ndc-projection-v0184.pt
+```
+
+Target criteria:
+
+| Metric | v0.18.3 baseline | v0.18.4 target |
+|---|---:|---:|
+| Raw accuracy | 70.00% | >= 80% |
+| Known accept | 50.00% | >= 65% |
+| Unknown reject | 100.00% | >= 90% |
+
+Files:
+
+- `ndc_projection_v0184.py` — projection head and checkpoint I/O
+- `run_ndc_projection_v0184.py` — training, multi-seed evaluation, threshold calibration
+
+This stage is intentionally limited to NDC main classes 0-9. Three-digit NDC
+routing will be attempted only after the projected main-class space is stable.
