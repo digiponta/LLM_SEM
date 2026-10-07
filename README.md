@@ -1165,3 +1165,47 @@ python .\run_ndc_consensus_v0188.py
 The experiment compares baseline, augmented, and consensus routing on the same
 FINAL-V3 set and reports the consensus delta in known acceptance, unknown
 rejection, and balanced score.
+
+
+## v0.18.9: Separated Classification / Unknown Detection
+
+v0.18.8 showed that the augmented router can reach 90.00% raw classification
+accuracy, while a single global threshold suppresses known acceptance.
+
+v0.18.9 therefore separates the two tasks:
+
+```text
+Semantic Vector
+   |
+   +--> Augmented NDC Router ----> NDC 0-9 label
+   |
+   +--> Evidence Gate -----------> ACCEPT / UNKNOWN
+```
+
+The NDC label always comes from the confusion-aware augmented router. The
+independent unknown gate combines:
+
+- baseline/augmented router agreement
+- augmented nearest similarity
+- baseline nearest similarity
+- augmented class margin
+- baseline class margin
+
+The gate uses a calibrated evidence score rather than one global cosine
+threshold.
+
+To preserve evaluation independence, this branch introduces a new FINAL-V4
+known/unknown holdout.
+
+Run:
+
+```powershell
+git switch v0.18.9
+python .\run_ndc_separated_gate_v0189.py
+```
+
+Target criteria:
+
+- raw augmented accuracy >= 80%
+- known acceptance >= 50%
+- unknown rejection >= 80%
