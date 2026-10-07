@@ -1572,3 +1572,45 @@ python .\verify_ndc_coverage_v0191.py
 
 The script compares v0.18.16 stable vs v0.19.1 coverage-expanded routing on the
 same new independent holdout and reports metric deltas.
+
+
+## v0.19.2: Expanded UNKNOWN Gate
+
+v0.19.1 improved independent known-code generalization substantially:
+
+- raw known accuracy: 83.33%
+- known accepted accuracy: 83.33%
+- known coverage: 91.67%
+- unknown reject: 66.67%
+- balanced score: 75.00%
+
+The remaining bottleneck is UNKNOWN detection.
+
+v0.19.2 keeps the coverage-expanded 3-digit router fixed and strengthens only
+the contrastive UNKNOWN gate by adding underspecified, referent-free, and
+gibberish-like UNKNOWN prototypes.
+
+Evaluation uses a new HOLDOUT-V3:
+
+- 30 known probes
+- 16 UNKNOWN probes
+- no calibration
+
+Files:
+
+- `ndc_unknown_expanded_v0192.py`
+- `ndc_hierarchy_unknown_v0192.py`
+- `verify_ndc_unknown_v0192.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_unknown_v0192.py
+```
+
+Target:
+
+- raw known accuracy >= 75%
+- known accepted accuracy >= 70%
+- UNKNOWN reject >= 80%
+- balanced score improves over v0.19.1 on the same HOLDOUT-V3
