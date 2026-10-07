@@ -1754,3 +1754,60 @@ python .\verify_ndc_robustness_v0197.py
 The sweep ranks variants primarily by minimum balanced score, then by mean
 balanced score. This prevents a router from being promoted solely because it
 performs extremely well on one specific holdout.
+
+
+## v0.19.8: Generalized Stable NDC Runtime Integration
+
+v0.19.7 cross-holdout robustness sweep selected v0.19.6 as the strongest
+selected 3-digit router across HOLDOUT-V3 through HOLDOUT-V7:
+
+- mean known accepted accuracy: 96.00%
+- mean UNKNOWN rejection: 93.75%
+- mean balanced score: 94.88%
+- minimum known accepted accuracy: 90.00%
+- minimum UNKNOWN rejection: 87.50%
+- minimum balanced score: 88.75%
+- robustness result: ROBUST_CANDIDATE
+
+v0.19.8 promotes the v0.19.6 selected 3-digit router to the default chat
+runtime path:
+
+```text
+/ndc <text>   -> v0.18.11 stable main-class router
+/ndc3 <text>  -> v0.19.6 generalized selected 3-digit router
+```
+
+The NDC runtime continues to use the dedicated frozen semantic checkpoint:
+
+```text
+model/model-sem-internalized-v01575.pt
+```
+
+This keeps classification independent from chat-model changes caused by
+`/sleep`, `/repair`, or runtime model reloads.
+
+Integrated verification:
+
+```powershell
+python .\verify_ndc_stable_v0198.py
+```
+
+The integration verifier runs:
+
+1. v0.18.16 stable main-class / selected-code regression
+2. v0.19.7 cross-holdout robustness sweep
+
+Promotion target:
+
+```text
+stable main-class runtime          : READY
+generalized selected-3digit router: READY
+chat /ndc3 promotion              : READY
+RESULT                             : PASS
+```
+
+Important evaluation note:
+The V3-V7 robustness sweep is retrospective because later router variants were
+designed after observing earlier holdout failures. Therefore v0.19.8 should be
+described as a robust stable runtime candidate, not as proof of fully independent
+generalization over the full NDC taxonomy.
