@@ -1325,3 +1325,35 @@ Examples:
 ```
 
 UNKNOWN remains a separate classification state and is never mapped to NDC 000.
+
+
+## v0.18.12: Hierarchical Selected 3-digit NDC Routing
+
+v0.18.11 established stable NDC main-class routing. v0.18.12 adds a second
+semantic routing stage for selected 3-digit codes already defined in ndc.py.
+
+Flow:
+
+```text
+Input
+ -> Stable main-class router
+ -> UNKNOWN or NDC main 0-9
+ -> same-main selected 3-digit prototypes
+ -> ACCEPT or MAIN_ONLY
+```
+
+States:
+- UNKNOWN: main-class gate rejects the input
+- MAIN_ONLY: main class is accepted but fine-code confidence is weak
+- ACCEPT: selected 3-digit code is accepted
+
+Files:
+- ndc_hierarchy_v01812.py
+- verify_ndc_hierarchy_v01812.py
+- chat.py adds /ndc3 <text>
+
+Run:
+
+```powershell
+python .\verify_ndc_hierarchy_v01812.py
+```
