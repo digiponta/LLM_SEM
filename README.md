@@ -1614,3 +1614,37 @@ Target:
 - known accepted accuracy >= 70%
 - UNKNOWN reject >= 80%
 - balanced score improves over v0.19.1 on the same HOLDOUT-V3
+
+
+## v0.19.4: Conditional Rescue + Pairwise Adjudication
+
+v0.19.3 showed no improvement over v0.19.2 and reduced known coverage by 3.33 pp.
+The remaining errors are not a general prototype-coverage problem.
+
+v0.19.4 keeps the v0.19.2 generalized router and adds only local decisions:
+
+- keyword-supported UNKNOWN rescue for 150 ethics and 490 medicine
+- pairwise adjudication for 007 vs 548
+- pairwise adjudication for 900 vs 910
+
+Global thresholds and the expanded UNKNOWN gate remain unchanged.
+
+Evaluation uses a new HOLDOUT-V5 with no calibration.
+
+Files:
+
+- `ndc_hierarchy_adjudication_v0194.py`
+- `verify_ndc_adjudication_v0194.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_adjudication_v0194.py
+```
+
+Target:
+
+- raw known accuracy >= 93%
+- known accepted accuracy >= 90%
+- UNKNOWN reject >= 90%
+- balanced score improves over v0.19.2 on the same HOLDOUT-V5
