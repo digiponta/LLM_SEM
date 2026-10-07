@@ -1988,7 +1988,8 @@ Commands:
       contrastive unknown gate.
 
   /ndc3 <text>
-      Run v0.18.12 hard hierarchical routing.
+      Run the stable v0.18.16 selected 3-digit NDC router.
+      This is the default production path.
 
   /ndc3beam <text>
       Run v0.18.13 beam hierarchical routing.
@@ -2150,7 +2151,7 @@ def main():
     )
 
     print("=" * 72)
-    print(" LLM_SEM Chat - v0.18.11 Stable NDC Runtime + Semantic Memory /sleep")
+    print(" LLM_SEM Chat - v0.18.16 Stable Hierarchical NDC Runtime + Semantic Memory /sleep")
     print("=" * 72)
     print("Device          :", device)
     if device.type == "cuda":
@@ -2304,25 +2305,32 @@ def main():
                 print("NDC3> usage: /ndc3 <text>")
                 continue
 
-            decision = ndc3_router.route(text)
+            decision = ndc3_stable_router.route(text)
             if decision.state == "ACCEPT":
                 print(
-                    f"NDC3> ACCEPT main={decision.ndc_main} "
-                    f"main_name={decision.ndc_main_name} "
+                    f"NDC3> ACCEPT stage1={decision.stage1_main} "
                     f"code={decision.ndc_code} "
                     f"name={decision.ndc_code_name} "
+                    f"rescued_main={decision.rescued_main} "
+                    f"rescued_unknown={decision.rescued_unknown} "
                     f"sim={decision.code_similarity:.6f} "
-                    f"margin={decision.code_margin:+.6f}"
+                    f"beam={decision.beam_score:.6f} "
+                    f"margin={decision.beam_margin:+.6f}"
                 )
             elif decision.state == "MAIN_ONLY":
                 print(
-                    f"NDC3> MAIN_ONLY main={decision.ndc_main} "
-                    f"main_name={decision.ndc_main_name} "
+                    f"NDC3> MAIN_ONLY stage1={decision.stage1_main} "
                     f"sim={decision.code_similarity:.6f} "
-                    f"margin={decision.code_margin:+.6f}"
+                    f"beam={decision.beam_score:.6f} "
+                    f"margin={decision.beam_margin:+.6f}"
                 )
             else:
-                print("NDC3> UNKNOWN")
+                print(
+                    f"NDC3> UNKNOWN "
+                    f"sim={decision.code_similarity:.6f} "
+                    f"beam={decision.beam_score:.6f} "
+                    f"margin={decision.beam_margin:+.6f}"
+                )
             continue
 
         if raw.startswith("/ndc"):
