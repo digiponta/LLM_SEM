@@ -894,3 +894,40 @@ python .\run_ndc_semantic_centroid_v0182.py --pooling attention
 ```
 
 UNKNOWN remains a classifier confidence state and is not NDC 000.
+
+
+## v0.18.3: Multi-Prototype NDC Semantic Router
+
+v0.18.2 showed that one centroid per NDC main class over-compressed the current
+semantic space. Mean pooling was best, but raw accuracy was 53.33%, while hybrid
+and attention were lower.
+
+v0.18.3 therefore keeps multiple semantic prototypes per NDC main class.
+
+Pipeline:
+
+```text
+text
+  -> mean-pooled semantic vector
+  -> cosine similarity to all NDC prototypes
+  -> per-class top-k aggregation
+  -> top-1 class / top-2 class margin
+  -> similarity + margin calibration
+  -> ACCEPT / UNKNOWN
+```
+
+The experiment searches:
+
+- top_k = 1, 2, 3
+- nearest-prototype weight = 0.40, 0.60, 0.80, 1.00
+- similarity threshold = 0.60 .. 0.95
+- margin threshold = 0.00 .. 0.08
+
+Run:
+
+```powershell
+python .\run_ndc_semantic_prototypes_v0183.py
+```
+
+The model remains frozen. This branch tests whether local prototype structure
+can recover NDC separability before any learned projection is introduced.
