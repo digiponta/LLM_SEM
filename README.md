@@ -1537,3 +1537,38 @@ Primary metrics:
 
 This experiment is intended to separate regression success from real
 generalization performance before expanding the selected NDC code set.
+
+
+## v0.19.1: Prototype Coverage Expansion
+
+v0.19.0 independent holdout evaluation exposed a large gap between regression
+success and paraphrase generalization. The frozen stable router achieved:
+
+- raw known accuracy: 45.00%
+- known accepted accuracy: 45.00%
+- known coverage: 76.67%
+- unknown reject: 66.67%
+- balanced score: 55.83%
+
+v0.19.1 keeps the semantic encoder and stable routing logic frozen, but expands
+selected 3-digit prototype coverage with additional paraphrase anchors.
+
+Important evaluation rule:
+
+- v0.19.0 holdout wording is not copied into the new prototypes
+- evaluation uses a separate HOLDOUT-V2
+- no calibration is performed on HOLDOUT-V2
+
+Files:
+
+- `ndc_hierarchy_coverage_v0191.py`
+- `verify_ndc_coverage_v0191.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_coverage_v0191.py
+```
+
+The script compares v0.18.16 stable vs v0.19.1 coverage-expanded routing on the
+same new independent holdout and reports metric deltas.
