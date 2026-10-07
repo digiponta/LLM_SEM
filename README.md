@@ -1395,3 +1395,42 @@ Run:
 ```powershell
 python .\verify_ndc_hierarchy_beam_v01813.py
 ```
+
+
+## v0.18.14: Fine-Code Reinforcement + Strict UNKNOWN Rescue
+
+v0.18.13 improved hierarchical routing from 24/33 to 30/33 and rescued six
+wrong Stage-1 main classifications. The three remaining failures were:
+
+- 490 medicine confused with 596 food/cooking
+- 596 food/cooking rejected by the main UNKNOWN gate
+- 930 English/American literature confused with generic 900 literature
+
+v0.18.14 adds targeted fine-code prototypes for 490, 596, 900, and 930, and
+introduces a strict UNKNOWN rescue path.
+
+```text
+Stage-1 ACCEPT
+  -> beam fine-code routing
+
+Stage-1 UNKNOWN
+  -> allow rescue only when
+       code_similarity >= 0.88
+       beam_margin     >= 0.04
+  -> otherwise keep UNKNOWN
+```
+
+This keeps unknown protection while allowing a very strong selected 3-digit
+prototype to recover a Stage-1 false negative.
+
+Files:
+
+- `ndc_hierarchy_rescue_v01814.py`
+- `verify_ndc_hierarchy_rescue_v01814.py`
+- `chat.py` adds `/ndc3rescue <text>`
+
+Run:
+
+```powershell
+python .\verify_ndc_hierarchy_rescue_v01814.py
+```
