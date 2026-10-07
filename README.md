@@ -1648,3 +1648,42 @@ Target:
 - known accepted accuracy >= 90%
 - UNKNOWN reject >= 90%
 - balanced score improves over v0.19.2 on the same HOLDOUT-V5
+
+
+## v0.19.5: Generalization Stable Candidate
+
+v0.19.4 passed independent HOLDOUT-V5 with:
+
+- raw known accuracy: 96.67%
+- known accepted accuracy: 96.67%
+- known coverage: 96.67%
+- unknown reject: 100.00%
+- balanced score: 98.33%
+
+The only remaining known failure was NDC 830 returning MAIN_ONLY because the
+beam margin was just below threshold.
+
+v0.19.5 adds only a small local NDC 830 bonus when explicit English-language
+evidence is present. Global thresholds, UNKNOWN logic, and all other
+adjudication rules are unchanged.
+
+Evaluation uses a new HOLDOUT-V6 with no calibration.
+
+Files:
+
+- `ndc_hierarchy_final_v0195.py`
+- `verify_ndc_final_v0195.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_final_v0195.py
+```
+
+Stable-candidate target:
+
+- raw known accuracy >= 97%
+- known accepted accuracy >= 97%
+- known coverage >= 97%
+- UNKNOWN reject >= 95%
+- balanced score >= 96%
