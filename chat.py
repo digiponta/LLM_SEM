@@ -55,6 +55,7 @@ from semantic_proposition_v0180 import (
 from ndc import classify_memory, enrich_memory_item
 from ndc_runtime_v01811 import StableNDCRouter
 from ndc_hierarchy_v01812 import HierarchicalNDCRouter
+from ndc_hierarchy_beam_v01813 import BeamHierarchicalNDCRouter
 
 
 DEFAULT_BASE_MODEL = "model/model-sem-internalized-v01575.pt"
@@ -1985,9 +1986,11 @@ Commands:
       contrastive unknown gate.
 
   /ndc3 <text>
-      Run v0.18.12 hierarchical routing: stable main class first, then
-      selected 3-digit NDC code within that main class. Low-confidence
-      fine routing returns MAIN_ONLY instead of forcing a code.
+      Run v0.18.12 hard hierarchical routing.
+
+  /ndc3beam <text>
+      Run v0.18.13 beam hierarchical routing. Stage-1 main class is used
+      as a soft prior, so a strong 3-digit code can rescue a wrong main class.
 
   /teach <prompt> => <answer>
       Add one persistent Semantic Memory item.
@@ -2094,6 +2097,10 @@ def main():
         ndc_model,
         tokenizer,
     )
+    ndc3_beam_router = BeamHierarchicalNDCRouter(
+        ndc_model,
+        tokenizer,
+    )
 
     gate_base_model, _gate_base_checkpoint = LanguageModel.load_checkpoint(
         str(gate_base_path),
@@ -2157,7 +2164,7 @@ def main():
     print("Unknown th      :", args.unknown_threshold)
     print()
     print(
-        "Commands: /ndc, /ndc3, /teach, /memory, /protected, /propteach, /prop, /props, "
+        "Commands: /ndc, /ndc3, /ndc3beam, /teach, /memory, /protected, /propteach, /prop, /props, "
         "/repair, /sleep, /model, /reload, /help, /quit"
     )
     print()
@@ -2177,6 +2184,34 @@ def main():
 
         if raw == "/help":
             print_help()
+            continue
+
+        if raw.startswith("/ndc3beam"):
+            text = raw[len("/ndc3beam"):].strip()
+            if not text:
+                print("NDC3B> usage: /ndc3beam <text>")
+                continue
+
+            decision = ndc3_beam_router.route(text)
+            if decision.state == "ACCEPT":
+                print(
+                    f"NDC3B> ACCEPT stage1={decision.stage1_main} "
+                    f"code={decision.ndc_code} "
+                    f"name={decision.ndc_code_name} "
+                    f"rescued={decision.rescued_main} "
+                    f"sim={decision.code_similarity:.6f} "
+                    f"beam={decision.beam_score:.6f} "
+                    f"margin={decision.beam_margin:+.6f}"
+                )
+            elif decision.state == "MAIN_ONLY":
+                print(
+                    f"NDC3B> MAIN_ONLY stage1={decision.stage1_main} "
+                    f"sim={decision.code_similarity:.6f} "
+                    f"beam={decision.beam_score:.6f} "
+                    f"margin={decision.beam_margin:+.6f}"
+                )
+            else:
+                print("NDC3B> UNKNOWN")
             continue
 
         if raw.startswith("/ndc3"):
