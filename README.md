@@ -1119,3 +1119,49 @@ python .\run_ndc_confusion_prototypes_v0187.py
 The script reports FINAL-V2 raw accuracy, known acceptance, unknown rejection,
 balanced score, per-class results, and the delta between augmented and baseline
 routing.
+
+
+## v0.18.8: Dual-Router Consensus Gate
+
+v0.18.7 improved raw routing from 63.33% to 66.67% on FINAL-V2, but global
+threshold calibration reduced known acceptance from 33.33% to 13.33% while
+raising unknown rejection to 100%.
+
+v0.18.8 therefore separates routing from unknown rejection. It runs both:
+
+- TRAIN-only baseline prototype router
+- confusion-aware augmented prototype router
+
+and accepts a classification only when both routers predict the same NDC main
+class and pass a relaxed similarity/margin gate.
+
+```text
+Semantic Vector
+   |--------------------|
+   v                    v
+Baseline Router    Augmented Router
+   |                    |
+   +------ agreement ---+
+             |
+      same NDC class?
+         /       \
+       yes       no
+       |          |
+ relaxed gate   UNKNOWN
+       |
+     ACCEPT
+```
+
+Because v0.18.8 was designed after observing FINAL-V2, it introduces a NEW
+FINAL-V3 holdout and does not reuse FINAL-V2 as a fresh benchmark.
+
+Run:
+
+```powershell
+git switch v0.18.8
+python .\run_ndc_consensus_v0188.py
+```
+
+The experiment compares baseline, augmented, and consensus routing on the same
+FINAL-V3 set and reports the consensus delta in known acceptance, unknown
+rejection, and balanced score.
