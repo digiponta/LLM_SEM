@@ -1614,3 +1614,38 @@ Target:
 - known accepted accuracy >= 70%
 - UNKNOWN reject >= 80%
 - balanced score improves over v0.19.1 on the same HOLDOUT-V3
+
+
+## v0.19.3: Boundary Reinforcement
+
+v0.19.2 improved UNKNOWN rejection from 56.25% to 87.50% on independent
+HOLDOUT-V3 while preserving 90.00% known accuracy.
+
+The remaining weak known boundaries were concentrated in:
+
+- 150 ethics
+- 547 communication engineering
+- 548 information engineering vs 007 information science
+
+v0.19.3 keeps the encoder, thresholds, coverage expansion, and UNKNOWN gate
+unchanged. It adds only boundary-specific semantic prototypes for these classes.
+
+Evaluation uses a new HOLDOUT-V4 with no calibration.
+
+Files:
+
+- `ndc_hierarchy_boundary_v0193.py`
+- `verify_ndc_boundary_v0193.py`
+
+Run:
+
+```powershell
+python .\verify_ndc_boundary_v0193.py
+```
+
+Target:
+
+- raw known accuracy >= 90%
+- known accepted accuracy >= 87%
+- UNKNOWN reject >= 85%
+- balanced score improves over v0.19.2 on the same HOLDOUT-V4
