@@ -840,3 +840,57 @@ Regression:
 ```powershell
 python .\run_ndc_classification_v0181.py
 ```
+
+
+## v0.18.2: Semantic Vector + NDC centroid experiment
+
+This branch adds a training-free semantic NDC router on top of the v0.18.1
+keyword baseline.
+
+Pipeline:
+
+```text
+text
+  -> LLM_SEM encode_semantic()
+  -> L2-normalized semantic vector
+  -> NDC 0-9 centroids
+  -> cosine top-1 / top-2 margin
+  -> similarity threshold
+  -> ACCEPT or UNKNOWN
+```
+
+The first experiment deliberately routes only the ten NDC main classes.  It
+does not yet classify three-digit NDC codes.  This keeps the experiment focused
+on whether the current semantic space separates broad knowledge domains.
+
+Files:
+
+- `ndc_semantic_router_v0182.py`
+  - curated centroid seeds for NDC 0-9
+  - semantic-vector encoding
+  - cosine centroid routing
+  - ACCEPT / UNKNOWN state
+- `run_ndc_semantic_centroid_v0182.py`
+  - 30 held-out known queries
+  - 12 ambiguous/nonsense unknown probes
+  - threshold sweep
+  - raw routing accuracy
+  - known acceptance
+  - unknown rejection
+  - balanced threshold score
+
+Run:
+
+```powershell
+python .\run_ndc_semantic_centroid_v0182.py
+```
+
+Optional pooling comparison:
+
+```powershell
+python .\run_ndc_semantic_centroid_v0182.py --pooling mean
+python .\run_ndc_semantic_centroid_v0182.py --pooling hybrid
+python .\run_ndc_semantic_centroid_v0182.py --pooling attention
+```
+
+UNKNOWN remains a classifier confidence state and is not NDC 000.
