@@ -1209,3 +1209,53 @@ Target criteria:
 - raw augmented accuracy >= 80%
 - known acceptance >= 50%
 - unknown rejection >= 80%
+
+
+## v0.18.10: Contrastive Unknown Gate
+
+v0.18.9 demonstrated that the NDC classifier itself is now strong:
+
+- FINAL-V4 raw augmented accuracy: 93.33%
+- known acceptance: 86.67%
+- unknown rejection: 16.67%
+
+The remaining problem is therefore unknown detection, not NDC classification.
+
+v0.18.10 freezes the classifier design and replaces the gate with a direct
+known-vs-unknown semantic comparison.
+
+```text
+Semantic Vector
+   |
+   +--> Augmented NDC prototypes
+   |       -> nearest known-domain similarity
+   |
+   +--> UNKNOWN prototypes
+           -> nearest unknown-pattern similarity
+
+contrast = known_similarity - unknown_similarity
+
+gate_score =
+    contrast_weight * contrast
+  + margin_weight * NDC_margin
+  + known_similarity_weight * known_similarity
+```
+
+The NDC label still comes from the augmented router. The contrastive gate only
+decides ACCEPT vs UNKNOWN.
+
+Evaluation uses a new FINAL-V5 holdout to avoid reusing FINAL-V4 after observing
+its errors.
+
+Run:
+
+```powershell
+git switch v0.18.10
+python .\run_ndc_unknown_gate_v01810.py
+```
+
+Target criteria:
+
+- raw augmented accuracy >= 80%
+- known acceptance >= 60%
+- unknown rejection >= 80%
